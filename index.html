@@ -36,13 +36,14 @@
 <style>
 .table-scroll{width:100%;overflow-x:auto;overscroll-behavior-inline:contain;scrollbar-color:var(--line) transparent}.table-scroll .split-table{min-width:0}.split-row{grid-template-columns:minmax(118px,1.25fr) repeat(3,minmax(36px,.45fr)) minmax(58px,.63fr);gap:6px}.split-row span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.split-row span:not(:first-child){white-space:nowrap}.split-row.header span:not(:first-child){text-align:right}.position-dot{display:inline!important;flex:0 0 auto!important;width:auto!important;height:auto!important;margin:0 4px 0 0!important;border:0!important;border-radius:0!important;color:var(--muted)!important;font:10px "DM Mono"!important}.split-empty{grid-column:1/-1;padding:16px 0;color:var(--muted);font:11px "DM Mono"}.page-meta{margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--line);color:var(--muted);font:10px/1.55 "DM Mono"}.page-meta a{color:var(--accent);text-decoration:none}.page-meta a:hover{text-decoration:underline}@media(min-width:961px){.grid{grid-template-columns:minmax(0,1.34fr) minmax(330px,.96fr)}}@media(max-width:720px){main{padding-left:16px;padding-right:16px}.grid{gap:24px}}@media(max-width:620px){.table-scroll{margin-right:calc(var(--space-3) * -1);padding-right:var(--space-3);width:calc(100% + var(--space-3))}.split-row{gap:6px}}
 </style>
+<style>#receiverName .receiver-initial{display:block}#receiverName .receiver-last{display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap}#receiverName .receiver-last small{display:inline;flex:0 0 auto;margin:0}</style>
 <link rel="icon" href="favicon.svg" type="image/svg+xml"></head><body>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><i class="mark" aria-hidden="true">∞</i><div><strong>QB SYNERGY</strong><span>QB to Receiver Connections</span></div></div>
     <nav class="side-nav"><a class="active" href="index.html">DUO EXPLORER <b>•</b></a><a href="top-connections.html">TOP CONNECTIONS <b>↗</b></a></nav>
     <div class="filter"><div class="side-label">Season scope</div><div class="select-wrap"><select id="seasonScope" aria-label="Select season scope"><option value="REG">Regular season</option><option value="POST">Playoffs</option><option value="ALL">Combined</option></select></div></div>
-    <div class="search"><div class="side-label">Find a connection</div><input id="pairSearch" type="search" autocomplete="off" placeholder="Josh, Jefferson, or Chiefs" aria-label="Find a quarterback target connection"><div class="search-results" id="searchResults"></div></div>
+    <div class="search"><div class="side-label">Find a connection</div><input id="pairSearch" type="search" autocomplete="off" placeholder="Josh or Jefferson" aria-label="Find a quarterback target connection"><div class="search-results" id="searchResults"></div></div>
     <div class="pair-list-title"><span class="side-label">Target tree</span></div>
     <div class="pair-list" id="pairList"></div>
     <div class="source">Built from <a href="https://nflverse.nflverse.com/" target="_blank" rel="noreferrer">nflverse</a> 2025 play-by-play.<br>Regular season · receiver-tagged attempts · min. 2 targets.</div>
@@ -141,6 +142,9 @@ fetch(SCOPE_FILES[activeScope]).then(r=>r.json()).then(data=>{
   $('#pairSearch').oninput=e=>renderSearch(e.target.value);
   $('#pairSearch').onkeydown=e=>{if(e.key==='Enter'){const first=$('#searchResults [data-qb]');if(first){e.preventDefault();first.click()}}};
 }).catch(error=>{console.error(error);$('main').innerHTML=`<div class="empty">Could not load dashboard data: ${error.message}</div>`});
+</script>
+<script>
+  (()=>{const el=document.getElementById('receiverName');if(!el)return;const repair=()=>{if(el.querySelector('.receiver-last'))return;const initial=el.childNodes[0]?.textContent?.trim().replace(/\.$/,'');const position=el.querySelector('small')?.textContent?.trim();const last=position?el.textContent.split(position).pop().trim():'';if(!initial||!position||!last)return;observer.disconnect();el.innerHTML=`<span class="receiver-initial">${initial}.</span><span class="receiver-last"><small>${position}</small>${last}</span>`;observer.observe(el,{childList:true,subtree:true})};const observer=new MutationObserver(repair);observer.observe(el,{childList:true,subtree:true});repair()})();
 </script>
 </body>
 </html>
