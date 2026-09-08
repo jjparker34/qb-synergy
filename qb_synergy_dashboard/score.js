@@ -14,6 +14,12 @@
     ['qb_epa_lift', 'scoreQbLift'], ['explosiveRate', 'scoreExplosive']];
   const number = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
   const group = row => row.position === 'RB' ? 'RB' : 'WR_TE';
+  function color(value) {
+    if (number(value) === null) return 'rgb(162 172 174)';
+    const t = Math.max(0, Math.min(1, value / 100));
+    const start = [155, 93, 229], end = [170, 245, 106];
+    return `rgb(${start.map((v, i) => Math.round(v + (end[i] - v) * t)).join(' ')})`;
+  }
   const id = row => `${row.qbId}:${row.receiverId}:${row.team}`;
   const divide = (a, b) => number(a) !== null && number(b) > 0 ? a / b : null;
   const percentile = (sample, value, strict = false) => {
@@ -76,6 +82,6 @@
     const before = new Map(ranked(previous, options).map((r, i) => [id(r), i + 1]));
     return new Map(ranked(current, options).map((r, i) => [id(r), before.has(id(r)) ? before.get(id(r)) - (i + 1) : 'New']));
   }
-  root.QBSynergyScore = {apply, calculate, ranked, rankChanges, number, group, id, percentile, components};
+  root.QBSynergyScore = {apply, calculate, ranked, rankChanges, number, group, id, percentile, components, color};
   if (typeof module !== 'undefined') module.exports = root.QBSynergyScore;
 })(globalThis);
