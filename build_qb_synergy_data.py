@@ -1,284 +1,279 @@
-"""Build compact 2025 QB-to-skill-player chemistry data from nflverse PBP.
-
-Run from the project root:
-    python build_qb_synergy_data.py
-"""
+"""Build validated NFL season assets: --season 2026 --output-dir qb_synergy_dashboard --refresh."""
 from __future__ import annotations
-
-import gzip
+import argparse
+import hashlib
 import json
-import math
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlretrieve
-
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 import pandas as pd
 
+ROOT = Path(__file__).resolve().parent
+PLAYERS_URL = 'https://github.com/nflverse/nflverse-data/releases/download/players/players.csv'
+SCHEDULE_URL = 'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv'
+SCOPES = {'REG': 'Regular season', 'POST': 'Playoffs', 'ALL': 'Regular season + playoffs'}
+RECEIVER_POSITION_OVERRIDES = {'00-0040718': 'WR'}  # Travis Hunter's receiving plays
+GROUP = ['passer_player_id', 'receiver_player_id', 'posteam']
+COLS = ['season', 'season_type', 'game_id', 'week', 'posteam', 'passer_player_id',
+        'passer_player_name', 'receiver_player_id', 'receiver_player_name', 'pass_attempt',
+        'complete_pass', 'pass_touchdown', 'interception', 'first_down_pass', 'receiving_yards',
+        'yards_after_catch', 'air_yards', 'epa', 'success', 'cpoe', 'xyac_mean_yardage', 'yardline_100', 'down']
 
-ROOT = Path(__file__).parent
-# The development workspace keeps the published artifact under outputs/; the
-# GitHub Pages checkout keeps the same files at its repository root.
-OUT = ROOT / "outputs" / "qb_synergy_dashboard" if (ROOT / "outputs" / "qb_synergy_dashboard").exists() else ROOT
-PBP_URL = "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2025.csv.gz"
-PLAYERS_URL = "https://github.com/nflverse/nflverse-data/releases/download/players/players.csv"
+def read_json(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
-# nflverse's primary player metadata position is defensive back for Travis Hunter,
-# but targets recorded to him are receiver plays and belong in this dashboard.
-RECEIVER_POSITION_OVERRIDES = {
-    "00-0040718": "WR",  # Travis Hunter
-}
+def write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, separators=(',', ':'), allow_nan=False), encoding='utf-8')
 
+def fetch(url, path, refresh=False, optional=False):
+    """Cache complete downloads only; keep the good cache on network errors."""
+    path = Path(path)
+    if path.exists() and not refresh:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = None
+    try:
+        with urlopen(Request(url, headers={'User-Agent': 'QB-Synergy'}), timeout=90) as response:
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as target:
+                temp = Path(target.name)
+                while chunk := response.read(1024 * 1024):
+                    target.write(chunk)
+        os.replace(temp, path)
+    except HTTPError as error:
+        if error.code == 404 and optional:
+            return None
+        raise
+    finally:
+        if temp:
+            temp.unlink(missing_ok=True)
+    return path
 
-def rate(row: pd.Series) -> float | None:
-    att, comp, yards, td, ints = (row[k] for k in ("targets", "receptions", "yards", "td", "interceptions"))
-    if not att:
-        return None
-    a = max(0, min(2.375, ((comp / att) - 0.3) * 5))
-    b = max(0, min(2.375, ((yards / att) - 3) * 0.25))
-    c = max(0, min(2.375, (td / att) * 20))
-    d = max(0, min(2.375, 2.375 - (ints / att) * 25))
-    return round(((a + b + c + d) / 6) * 100, 1)
+def canonical_name(names):
+    values = [str(n) for n in names.dropna() if str(n).strip()]
+    return max(values, key=lambda n: (len(n), n)) if values else 'Unknown'
 
-
-def nullable(value, digits=1):
-    if value is None or pd.isna(value) or math.isinf(value):
-        return None
-    return round(float(value), digits)
-
-
-def canonical_name(names: pd.Series) -> str:
-    """Keep one readable display name for each nflverse player ID."""
-    candidates = [str(name) for name in names.dropna() if str(name).strip()]
-    return max(candidates, key=lambda name: (len(name), name)) if candidates else "Unknown"
-
-
-def main(scope: str = "REG", output_name: str = "data.json") -> None:
-    playoff_scope = scope == "POST"
-    OUT.mkdir(parents=True, exist_ok=True)
-    cache = OUT / ".cache"
-    cache.mkdir(exist_ok=True)
-    pbp_file = cache / "play_by_play_2025.csv.gz"
-    players_file = cache / "players.csv"
-    if not pbp_file.exists():
-        print("Downloading 2025 nflverse play-by-play…")
-        urlretrieve(PBP_URL, pbp_file)
-    if not players_file.exists():
-        print("Downloading nflverse player metadata…")
-        urlretrieve(PLAYERS_URL, players_file)
-
-    cols = [
-        "season_type", "week", "posteam", "passer_player_id", "passer_player_name",
-        "receiver_player_id", "receiver_player_name",
-        "pass_attempt", "complete_pass", "pass_touchdown", "interception", "first_down_pass",
-        "passing_yards", "receiving_yards", "yards_after_catch", "air_yards", "epa", "success",
-        "cpoe", "xyac_mean_yardage", "yardline_100", "down", "play_type", "qb_dropback",
-    ]
-    print("Reading and filtering play-by-play…")
-    pbp = pd.read_csv(pbp_file, compression="gzip", usecols=cols, low_memory=False)
-    players = pd.read_csv(players_file, low_memory=False)
-    id_col = "gsis_id" if "gsis_id" in players.columns else "nfl_id"
-    photo_col = next((c for c in ("headshot_url", "headshot") if c in players.columns), None)
-    positions = dict(zip(players[id_col].astype(str), players["position"].fillna("")))
+def prepare(pbp, players):
+    if not set(COLS).issubset(pbp.columns):
+        raise ValueError(f'Missing play-by-play columns: {set(COLS) - set(pbp.columns)}')
+    id_col = 'gsis_id' if 'gsis_id' in players else 'nfl_id'
+    if not {id_col, 'position', 'display_name'}.issubset(players.columns):
+        raise ValueError('Player metadata is missing required columns')
+    positions = players.set_index(id_col).position.to_dict()
     positions.update(RECEIVER_POSITION_OVERRIDES)
-    full_names = dict(zip(players[id_col].astype(str), players["display_name"].fillna("")))
-    photos = dict(zip(players[id_col].astype(str), players[photo_col].fillna(""))) if photo_col else {}
-    pbp["receiver_player_position"] = pbp.receiver_player_id.astype(str).map(positions)
+    plays = pbp.loc[pbp.pass_attempt.eq(1) & pbp.passer_player_id.notna()
+                    & pbp.receiver_player_id.notna() & pbp.posteam.notna()].copy()
+    plays['position'] = plays.receiver_player_id.map(positions)
+    plays = plays.loc[plays.position.isin(['WR', 'TE', 'RB'])].copy()
+    for key in ['passer', 'receiver']:
+        names = plays.groupby(f'{key}_player_id')[f'{key}_player_name'].agg(canonical_name)
+        plays[f'{key}_player_name'] = plays[f'{key}_player_id'].map(names)
+    for dest, src in {'receptions': 'complete_pass', 'yards': 'receiving_yards', 'td': 'pass_touchdown',
+                      'interceptions': 'interception', 'first_downs': 'first_down_pass', 'yac': 'yards_after_catch'}.items():
+        plays[dest] = plays[src].fillna(0)
+    plays['expected_yac'] = plays.xyac_mean_yardage.where(plays.receptions.eq(1), 0)
+    covered = plays.receptions.eq(1) & plays.xyac_mean_yardage.notna() & plays.yards_after_catch.notna()
+    plays['modeled_receptions'] = covered.astype(int)
+    plays['modeled_yac_over_expected'] = (plays.yards_after_catch - plays.xyac_mean_yardage).where(covered)
+    plays['red_zone_targets'] = plays.yardline_100.le(20).astype(int)
+    plays['money_down_targets'] = plays.down.isin([3, 4]).astype(int)
+    plays['money_down_failures'] = (plays.money_down_targets.eq(1) & plays.first_downs.eq(0) & plays.td.eq(0)).astype(int)
+    plays['explosives'] = plays.yards.ge(20).astype(int)
+    return plays
 
-    season_types = ["REG", "POST"] if scope == "ALL" else [scope]
-    plays = pbp.loc[
-        (pbp.season_type.isin(season_types))
-        & (pbp.pass_attempt == 1)
-        & pbp.passer_player_id.notna()
-        & pbp.receiver_player_id.notna()
-        & pbp.receiver_player_position.isin(["WR", "TE", "RB"])
-    ].copy()
-    plays["complete"] = plays.complete_pass.fillna(0)
-    plays["yards"] = plays.receiving_yards.fillna(0)
-    plays["yac"] = plays.yards_after_catch.fillna(0)
-    plays["expected_yac"] = plays.xyac_mean_yardage.where(plays.complete.eq(1), 0).fillna(0)
-    plays["td"] = plays.pass_touchdown.fillna(0)
-    plays["ints"] = plays.interception.fillna(0)
-    plays["first_down"] = plays.first_down_pass.fillna(0)
-    plays["success_play"] = plays.success.fillna(0)
-    plays["rz_target"] = (plays.yardline_100 <= 20).astype(int)
-    plays["explosive"] = (plays.receiving_yards >= 20).astype(int)
-    plays["money_down_target"] = plays.down.isin([3, 4]).astype(int)
-    plays["money_down_failure"] = (
-        plays.money_down_target.eq(1)
-        & plays.first_down.eq(0)
-        & plays.td.eq(0)
-    ).astype(int)
+def ratio(a, b):
+    return a / b.replace(0, float('nan'))
 
-    # Receiver IDs are canonical; nflverse occasionally changes the abbreviated name
-    # within the same season (for example, C.Washington / Cas.Washington).
-    canonical_receiver_names = plays.groupby(plays.receiver_player_id.astype(str))["receiver_player_name"].agg(canonical_name)
-    plays["receiver_player_name"] = plays.receiver_player_id.astype(str).map(canonical_receiver_names)
-    group = ["passer_player_id", "passer_player_name", "receiver_player_id", "receiver_player_position", "posteam"]
-    pairs = plays.groupby(group, dropna=False).agg(
-        receiver_player_name=("receiver_player_name", "first"),
-        targets=("pass_attempt", "size"), receptions=("complete", "sum"), yards=("yards", "sum"),
-        td=("td", "sum"), interceptions=("ints", "sum"), epa=("epa", "sum"),
-        cpoe=("cpoe", "mean"), air_yards=("air_yards", "mean"), yac=("yac", "sum"), expected_yac=("expected_yac", "sum"),
-        success_rate=("success_play", "mean"), first_downs=("first_down", "sum"),
-        red_zone_targets=("rz_target", "sum"), money_down_targets=("money_down_target", "sum"),
-        money_down_failures=("money_down_failure", "sum"),
-        explosives=("explosive", "sum"), games=("week", "nunique"),
-    ).reset_index()
-    qb_totals = plays.groupby("passer_player_id").agg(
-        qb_targets=("pass_attempt", "size"), qb_epa=("epa", "sum"),
-        qb_red_zone_targets=("rz_target", "sum"),
-        qb_money_down_targets=("money_down_target", "sum"),
-    )
-    receiver_totals = plays.groupby("receiver_player_id").agg(
-        receiver_targets=("pass_attempt", "size"), receiver_epa=("epa", "sum"),
-    )
-    pairs = pairs.join(qb_totals, on="passer_player_id")
-    pairs = pairs.join(receiver_totals, on="receiver_player_id")
-    pairs["catch_rate"] = pairs.receptions / pairs.targets
-    pairs["yards_per_target"] = pairs.yards / pairs.targets
-    pairs["yards_per_reception"] = pairs.yards / pairs.receptions.replace(0, pd.NA)
-    pairs["yac_per_reception"] = pairs.yac / pairs.receptions.replace(0, pd.NA)
-    pairs["yac_over_expected"] = pairs.yac - pairs.expected_yac
-    pairs["yac_over_expected_per_reception"] = pairs.yac_over_expected / pairs.receptions.replace(0, pd.NA)
-    pairs["epa_per_target"] = pairs.epa / pairs.targets
-    pairs["target_share"] = pairs.targets / pairs.qb_targets
-    pairs["money_down_rate"] = pairs.money_down_targets / pairs.targets
-    pairs["interception_rate"] = pairs.interceptions / pairs.targets
-    pairs["money_down_failure_rate"] = pairs.money_down_failures / pairs.money_down_targets.replace(0, pd.NA)
-    pairs["money_down_target_share"] = pairs.money_down_targets / pairs.qb_money_down_targets.replace(0, pd.NA)
-    pairs["red_zone_target_share"] = pairs.red_zone_targets / pairs.qb_red_zone_targets.replace(0, pd.NA)
-    pairs["money_down_share_lift"] = pairs.money_down_target_share - pairs.target_share
-    pairs["red_zone_share_lift"] = pairs.red_zone_target_share - pairs.target_share
-    qb_other_targets = (pairs.qb_targets - pairs.targets).replace(0, pd.NA)
-    pairs["qb_other_epa_per_target"] = (pairs.qb_epa - pairs.epa) / qb_other_targets
-    pairs["qb_epa_lift"] = pairs.epa_per_target - pairs.qb_other_epa_per_target
+def aggregate(plays, players):
+    if plays.empty:
+        return []
+    sums = ['receptions', 'yards', 'td', 'interceptions', 'first_downs', 'yac', 'expected_yac',
+            'epa', 'red_zone_targets', 'money_down_targets', 'money_down_failures', 'explosives']
+    spec = {k: (k, 'sum') for k in sums}
+    for k in ['epa', 'expected_yac']:
+        spec[k] = (k, lambda x: x.sum() if x.notna().all() else float('nan'))
+    spec.update(targets=('pass_attempt', 'size'), games=('game_id', 'nunique'),
+                qb=('passer_player_name', 'first'), receiver=('receiver_player_name', 'first'),
+                position=('position', 'first'), cpoe=('cpoe', 'mean'),
+                air_yards=('air_yards', 'mean'), success_rate=('success', 'mean'))
+    spec['modeled_receptions'] = ('modeled_receptions', 'sum')
+    spec['yac_over_expected_per_reception'] = ('modeled_yac_over_expected', 'mean')
+    pairs = plays.groupby(GROUP).agg(**spec).reset_index()
+    qb = plays.groupby('passer_player_id').agg(qb_targets=('pass_attempt', 'size'),
+         qb_epa=('epa', lambda x: x.sum() if x.notna().all() else float('nan')),
+         qb_red_zone_targets=('red_zone_targets', 'sum'), qb_money_down_targets=('money_down_targets', 'sum'))
+    pairs = pairs.join(qb, on='passer_player_id')
+    divisions = {'catch_rate': ('receptions', 'targets'), 'yards_per_target': ('yards', 'targets'),
+        'yac_per_reception': ('yac', 'receptions'), 'epa_per_target': ('epa', 'targets'),
+        'target_share': ('targets', 'qb_targets'), 'money_down_rate': ('money_down_targets', 'targets'),
+        'interception_rate': ('interceptions', 'targets'),
+        'money_down_failure_rate': ('money_down_failures', 'money_down_targets'),
+        'money_down_target_share': ('money_down_targets', 'qb_money_down_targets'),
+        'red_zone_target_share': ('red_zone_targets', 'qb_red_zone_targets')}
+    for name, (a, b) in divisions.items():
+        pairs[name] = ratio(pairs[a], pairs[b])
+    pairs['qb_epa_lift'] = pairs.epa_per_target - ratio(pairs.qb_epa - pairs.epa, pairs.qb_targets - pairs.targets)
+    a = ((pairs.receptions / pairs.targets - .3) * 5).clip(0, 2.375)
+    b = ((pairs.yards / pairs.targets - 3) * .25).clip(0, 2.375)
+    c = (pairs.td / pairs.targets * 20).clip(0, 2.375)
+    d = (2.375 - pairs.interceptions / pairs.targets * 25).clip(0, 2.375)
+    pairs['passer_rating'] = (a + b + c + d) / 6 * 100
+    id_col = 'gsis_id' if 'gsis_id' in players else 'nfl_id'
+    if '_qb_metadata' not in players.attrs:
+        players.attrs['_qb_metadata'] = players.drop_duplicates(id_col).set_index(id_col).to_dict('index')
+    metadata = players.attrs['_qb_metadata']
+    result = []
+    for row in pairs.to_dict('records'):
+        row['qbId'] = row.pop('passer_player_id')
+        row['receiverId'] = row.pop('receiver_player_id')
+        row['team'] = row.pop('posteam')
+        for role in ['qb', 'receiver']:
+            meta = metadata.get(row[f'{role}Id'], {})
+            row[f'{role}FullName'] = meta.get('display_name') or row[role]
+            row[f'{role}Photo'] = meta.get('headshot_url', meta.get('headshot', ''))
+        for key, value in row.items():
+            if pd.isna(value):
+                row[key] = None
+            elif isinstance(value, (float, int)):
+                row[key] = round(float(value), 4)
+        result.append(row)
+    return sorted(result, key=lambda r: (r['qbId'], r['receiverId'], r['team']))
 
-    weekly_group = ["week", *group]
-    weekly = plays.groupby(weekly_group, dropna=False).agg(
-        targets=("pass_attempt", "size"), receptions=("complete", "sum"), epa=("epa", "sum"), cpoe=("cpoe", "mean"),
-        success_rate=("success_play", "mean"), first_downs=("first_down", "sum"),
-        red_zone_targets=("rz_target", "sum"), money_down_targets=("money_down_target", "sum"),
-        money_down_failures=("money_down_failure", "sum"), explosives=("explosive", "sum"),
-        interceptions=("ints", "sum"), yac=("yac", "sum"), expected_yac=("expected_yac", "sum"),
-    ).reset_index()
-    weekly_qb = plays.groupby(["week", "passer_player_id"]).agg(
-        qb_targets=("pass_attempt", "size"), qb_epa=("epa", "sum"),
-        qb_red_zone_targets=("rz_target", "sum"), qb_money_down_targets=("money_down_target", "sum"),
-    ).reset_index()
-    weekly = weekly.merge(weekly_qb, on=["week", "passer_player_id"], how="left")
-    weekly["epa_per_target"] = weekly.epa / weekly.targets
-    weekly["yac_over_expected_per_reception"] = (weekly.yac - weekly.expected_yac) / weekly.receptions.replace(0, pd.NA)
-    weekly["target_share"] = weekly.targets / weekly.qb_targets
-    weekly["money_down_share_lift"] = (
-        weekly.money_down_targets / weekly.qb_money_down_targets.replace(0, pd.NA)
-        - weekly.target_share
-    )
-    weekly["red_zone_share_lift"] = (
-        weekly.red_zone_targets / weekly.qb_red_zone_targets.replace(0, pd.NA)
-        - weekly.target_share
-    )
-    weekly_other_targets = (weekly.qb_targets - weekly.targets).replace(0, pd.NA)
-    weekly["qb_epa_lift"] = weekly.epa_per_target - (weekly.qb_epa - weekly.epa) / weekly_other_targets
-    weekly["interception_rate"] = weekly.interceptions / weekly.targets
-    weekly["money_down_failure_rate"] = weekly.money_down_failures / weekly.money_down_targets.replace(0, pd.NA)
-    weekly_keys = ["targets", "epa_per_target", "cpoe", "yac_over_expected_per_reception", "success_rate", "first_downs", "explosives", "target_share", "money_down_share_lift", "red_zone_share_lift", "qb_epa_lift", "qb_money_down_targets", "qb_red_zone_targets", "interception_rate", "money_down_failure_rate"]
-    def pair_key(row):
-        return tuple(str(row[column]) for column in group)
-    weekly_by_pair = {}
-    for row in weekly.to_dict("records"):
-        weekly_by_pair.setdefault(pair_key(row), []).append({
-            "week": int(row["week"]),
-            **{key: nullable(row[key], 3) for key in weekly_keys},
-        })
+def scope_schedule(schedule, scope):
+    if scope == 'ALL':
+        return schedule
+    return schedule.loc[schedule.game_type.eq('REG') if scope == 'REG' else ~schedule.game_type.eq('REG')]
 
-    recent = plays.loc[plays.week >= plays.week.max() - 3]
-    last4 = recent.groupby(group, dropna=False).agg(
-        last4_targets=("pass_attempt", "size"), last4_receptions=("complete", "sum"), last4_epa=("epa", "sum"),
-        last4_cpoe=("cpoe", "mean"), last4_success_rate=("success_play", "mean"),
-        last4_first_downs=("first_down", "sum"), last4_red_zone_targets=("rz_target", "sum"),
-        last4_money_down_targets=("money_down_target", "sum"),
-        last4_money_down_failures=("money_down_failure", "sum"),
-        last4_explosives=("explosive", "sum"), last4_interceptions=("ints", "sum"), last4_yac=("yac", "sum"), last4_expected_yac=("expected_yac", "sum"),
-        last4_games=("week", "nunique"),
-    ).reset_index()
-    last4_qb = recent.groupby("passer_player_id").agg(
-        last4_qb_targets=("pass_attempt", "size"), last4_qb_epa=("epa", "sum"),
-        last4_qb_red_zone_targets=("rz_target", "sum"),
-        last4_qb_money_down_targets=("money_down_target", "sum"),
-    )
-    last4 = last4.join(last4_qb, on="passer_player_id")
-    last4["last4_epa_per_target"] = last4.last4_epa / last4.last4_targets
-    last4["last4_yac_over_expected_per_reception"] = (last4.last4_yac - last4.last4_expected_yac) / last4.last4_receptions.replace(0, pd.NA)
-    last4["last4_target_share"] = last4.last4_targets / last4.last4_qb_targets
-    last4["last4_money_down_target_share"] = last4.last4_money_down_targets / last4.last4_qb_money_down_targets.replace(0, pd.NA)
-    last4["last4_red_zone_target_share"] = last4.last4_red_zone_targets / last4.last4_qb_red_zone_targets.replace(0, pd.NA)
-    last4["last4_money_down_share_lift"] = (
-        last4.last4_money_down_targets / last4.last4_qb_money_down_targets.replace(0, pd.NA)
-        - last4.last4_target_share
-    )
-    last4["last4_red_zone_share_lift"] = (
-        last4.last4_red_zone_targets / last4.last4_qb_red_zone_targets.replace(0, pd.NA)
-        - last4.last4_target_share
-    )
-    last4_other_targets = (last4.last4_qb_targets - last4.last4_targets).replace(0, pd.NA)
-    last4["last4_qb_epa_lift"] = last4.last4_epa_per_target - (last4.last4_qb_epa - last4.last4_epa) / last4_other_targets
-    last4["last4_money_down_failure_rate"] = last4.last4_money_down_failures / last4.last4_money_down_targets.replace(0, pd.NA)
-    last4["last4_interception_rate"] = last4.last4_interceptions / last4.last4_targets
-    recent_columns = [c for c in last4.columns if c.startswith("last4_")]
-    pairs = pairs.merge(last4[group + recent_columns], on=group, how="left")
-    pairs[recent_columns] = pairs[recent_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
-    pairs["passer_rating"] = pairs.apply(rate, axis=1)
-    pairs = pairs.loc[pairs.targets >= 2].sort_values(["passer_player_name", "targets"], ascending=[True, False])
+def coverage(pbp, schedule, scope):
+    scheduled = scope_schedule(schedule, scope)
+    scoped = pbp if scope == 'ALL' else pbp.loc[pbp.season_type.eq(scope)]
+    ids = set(scoped.game_id.dropna())
+    completed = []
+    for week, games in scheduled.groupby('week', sort=True):
+        if games.home_score.notna().all() and games.away_score.notna().all() and set(games.game_id).issubset(ids):
+            completed.append(int(week))
+        else:
+            break
+    included = int(scoped.week.max()) if len(scoped) else None
+    return sorted(ids), completed, included
 
-    numeric = ["targets", "receptions", "yards", "td", "interceptions", "epa", "cpoe", "air_yards", "yac", "expected_yac", "yac_over_expected", "yac_over_expected_per_reception", "success_rate", "first_downs", "red_zone_targets", "money_down_targets", "money_down_failures", "explosives", "games", "qb_targets", "qb_epa", "qb_red_zone_targets", "qb_money_down_targets", "receiver_targets", "receiver_epa", "catch_rate", "yards_per_target", "yards_per_reception", "yac_per_reception", "epa_per_target", "target_share", "money_down_rate", "interception_rate", "money_down_failure_rate", "money_down_target_share", "red_zone_target_share", "money_down_share_lift", "red_zone_share_lift", "qb_other_epa_per_target", "qb_epa_lift", "passer_rating", *recent_columns]
-    records = []
-    for r in pairs.to_dict("records"):
-        item = {
-            "qbId": str(r["passer_player_id"]), "qb": r["passer_player_name"],
-            "qbFullName": full_names.get(str(r["passer_player_id"]), r["passer_player_name"]),
-            "receiverId": str(r["receiver_player_id"]), "receiver": r["receiver_player_name"],
-            "receiverFullName": full_names.get(str(r["receiver_player_id"]), r["receiver_player_name"]),
-            "position": r["receiver_player_position"], "team": r["posteam"],
-            "qbPhoto": photos.get(str(r["passer_player_id"]), ""),
-            "receiverPhoto": photos.get(str(r["receiver_player_id"]), ""),
-            # Weekly history is retained for score-qualified connections; this keeps
-            # the public payload compact without changing rankings or raw totals.
-            "weekly": weekly_by_pair.get(pair_key(r), []) if r["targets"] >= (5 if playoff_scope else 15) else [],
-        }
-        for key in numeric:
-            item[key] = nullable(r[key], 3 if key in {"epa", "cpoe", "air_yards", "expected_yac", "yac_over_expected", "yac_over_expected_per_reception", "epa_per_target", "target_share", "money_down_rate", "interception_rate", "money_down_failure_rate", "money_down_target_share", "red_zone_target_share", "money_down_share_lift", "red_zone_share_lift", "qb_other_epa_per_target", "qb_epa_lift", "success_rate", "catch_rate"} or key.startswith("last4_") else 1)
-        records.append(item)
-    identity_audit = pd.DataFrame(records).groupby("receiverId")["receiver"].nunique()
-    conflicts = identity_audit[identity_audit > 1]
-    if not conflicts.empty:
-        raise ValueError(f"Receiver identity audit failed for IDs: {', '.join(conflicts.index.tolist())}")
-    print(f"Identity audit passed: {len(identity_audit):,} receiver IDs each have one display name.")
-    scope_label = {
-        "REG": "Regular season",
-        "POST": "Playoffs",
-        "ALL": "Regular season + playoffs",
-    }[scope]
-    playoff_scope = scope == "POST"
-    payload = {
-        "season": 2025,
-        "scope": f"{scope_label} · receiver-tagged pass attempts",
-        "seasonScope": scope,
-        "generatedAt": datetime.now(timezone.utc).date().isoformat(),
-        "methodVersion": "2025.1",
-        # Short playoff schedules need smaller, but still meaningful, samples.
-        "thresholds": {
-            "score": 5 if playoff_scope else 15,
-            "qualified": 5 if playoff_scope else 30,
-            "weekly": 2 if playoff_scope else 4,
-        },
-        "pairs": records,
-    }
-    output_path = OUT / output_name
-    output_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-    print(f"Wrote {len(records):,} QB–receiver pair rows to {output_path}")
+def validate(payload, previous=None):
+    json.dumps(payload, allow_nan=False)
+    identities = set()
+    for row in payload['pairs']:
+        identity = (row['qbId'], row['receiverId'], row['team'])
+        if identity in identities:
+            raise ValueError(f'Duplicate connection: {identity}')
+        identities.add(identity)
+        if not (row['targets'] > 0 and 0 <= row['receptions'] <= row['targets']):
+            raise ValueError(f'Invalid targets/receptions: {identity}')
+        if row['position'] not in ['WR', 'TE', 'RB']:
+            raise ValueError('Unexpected receiver position')
+    if previous and not set(previous.get('gameIds', [])).issubset(payload['gameIds']):
+        raise ValueError('Previously included games disappeared; publication stopped')
+    if previous and previous.get('pairs') and not payload['pairs']:
+        raise ValueError('Previously available connections disappeared')
 
+def build(season, output_dir, refresh=False, cache_dir=None):
+    output = Path(output_dir).resolve()
+    cache = Path(cache_dir) if cache_dir else ROOT / '.cache' / 'qb-synergy'
+    now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    schedule_file = fetch(SCHEDULE_URL, cache / 'games.csv', refresh)
+    players_file = fetch(PLAYERS_URL, cache / 'players.csv', refresh)
+    schedule = pd.read_csv(schedule_file)
+    schedule = schedule.loc[schedule.season.eq(season) & schedule.game_type.ne('PRE')].copy()
+    if schedule.empty:
+        raise ValueError(f'No schedule available for {season}')
+    pbp_file = fetch(f'https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv.gz',
+                     cache / f'play_by_play_{season}.csv.gz', refresh, optional=True)
+    if pbp_file is None:
+        if schedule.home_score.notna().any() or schedule.gameday.min() < now[:10]:
+            raise ValueError('Play-by-play unavailable after season start; keeping published data')
+        pbp = pd.DataFrame(columns=COLS)
+    else:
+        pbp = pd.read_csv(pbp_file, usecols=COLS, low_memory=False)
+        if pbp.empty or not pbp.season.eq(season).all():
+            raise ValueError('Empty or incorrect-season play-by-play file')
+        pbp = pbp.loc[pbp.season_type.isin(['REG', 'POST'])].copy()
+    completed_ids = set(schedule.loc[schedule.home_score.notna() & schedule.away_score.notna(), 'game_id'])
+    pbp_ids = set(pbp.game_id.dropna())
+    if completed_ids - pbp_ids:
+        raise ValueError(f'Play-by-play missing {len(completed_ids - pbp_ids)} completed games')
+    if pbp_ids - set(schedule.game_id):
+        raise ValueError('Play-by-play contains games absent from the season schedule')
+    players = pd.read_csv(players_file, low_memory=False)
+    plays = prepare(pbp, players)
+    fingerprint = hashlib.sha256(((hashlib.sha256(pbp_file.read_bytes()).hexdigest() if pbp_file else 'unavailable')
+        + hashlib.sha256(players_file.read_bytes()).hexdigest() + schedule.to_csv(index=False)).encode()).hexdigest()
+    builder_fingerprint = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    checked_at = now if refresh else datetime.fromtimestamp(min(p.stat().st_mtime for p in
+        [schedule_file, players_file, *([pbp_file] if pbp_file else [])]), timezone.utc).isoformat(timespec='seconds')
+    destination = output / 'data' / str(season)
+    generated = {}
+    for scope, label in SCOPES.items():
+        scoped = plays if scope == 'ALL' else plays.loc[plays.season_type.eq(scope)]
+        game_ids, completed, included = coverage(pbp, schedule, scope)
+        first = int(scoped.week.min()) if len(scoped) else None
+        thresholds = {'score': 5 if scope == 'POST' else 15, 'qualified': 5 if scope == 'POST' else 30,
+                      'weekly': 2 if scope == 'POST' else 4}
+        previous_path = destination / f'{scope}.json'
+        previous = read_json(previous_path) if previous_path.exists() else None
+        unchanged = previous and previous.get('sourceFingerprint') == fingerprint and previous.get('builderFingerprint') == builder_fingerprint
+        generated_at = previous['generatedAt'] if unchanged else now
+        meta = dict(season=season, seasonScope=scope, scope=label, methodVersion='2026.1',
+                    generatedAt=generated_at, sourceCheckedAt=checked_at, sourceFingerprint=fingerprint,
+                    builderFingerprint=builder_fingerprint,
+                    latestIncludedWeek=included, latestCompletedWeek=completed[-1] if completed else None,
+                    firstWeek=first, gameIds=game_ids, thresholds=thresholds)
+        payload = dict(meta, pairs=aggregate(scoped, players), status='available' if len(scoped) else 'pending')
+        payload['recent'] = aggregate(scoped.loc[scoped.week.ge(included - 3)], players) if included else []
+        payload['recentStartWeek'] = max(first, included - 3) if included else None
+        payload['weekly'] = [{'week': int(week), 'pairs': aggregate(rows, players)} for week, rows in scoped.groupby('week', sort=True)]
+        payload['snapshotWeeks'] = completed
+        validate(payload, previous)
+        generated[f'{scope}.json'] = payload
+        for week in completed:
+            subset = scoped.loc[scoped.week.le(week)]
+            snapshot = dict(meta, throughWeek=week, pairs=aggregate(subset, players),
+                            recent=aggregate(subset.loc[subset.week.ge(week - 3)], players))
+            snapshot.update(latestIncludedWeek=week, latestCompletedWeek=week,
+                            recentStartWeek=max(first, week - 3))
+            snapshot['gameIds'] = sorted(set(pbp.loc[pbp.week.le(week) & pbp.game_id.isin(game_ids), 'game_id']))
+            validate(snapshot)
+            generated[f'snapshots/{scope}-{week}.json'] = snapshot
+        print(f'{season} {scope}: {len(payload["pairs"])} connections, {len(game_ids)} games; completed week {meta["latestCompletedWeek"]}')
+    # Validate every scope and snapshot before replacing public assets.
+    with tempfile.TemporaryDirectory(prefix='qb-synergy-') as folder:
+        stage = Path(folder)
+        for name, payload in generated.items():
+            write_json(stage / name, payload)
+        for name in generated:
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_suffix('.tmp')
+            temp.write_bytes((stage / name).read_bytes())
+            os.replace(temp, target)
+    manifest_path = output / 'data' / 'manifest.json'
+    manifest = read_json(manifest_path) if manifest_path.exists() else {'activeSeason': 2026, 'seasons': []}
+    manifest['seasons'] = sorted(set(manifest['seasons']) | {season}, reverse=True)
+    write_json(manifest_path, manifest)
+    summary = os.environ.get('GITHUB_STEP_SUMMARY')
+    if summary:
+        with open(summary, 'a', encoding='utf-8') as handle:
+            handle.write(f'### {season} refresh validated\n\nChecked {now}. Source `{fingerprint[:12]}`.\n\n')
+            for scope in SCOPES:
+                p = generated[f'{scope}.json']
+                handle.write(f'- {scope}: {len(p["pairs"])} connections; {len(p["gameIds"])} games; completed week {p["latestCompletedWeek"]}.\n')
 
-if __name__ == "__main__":
-    main("REG", "data.json")
-    main("POST", "data-playoffs.json")
-    main("ALL", "data-combined.json")
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--season', type=int, required=True)
+    parser.add_argument('--output-dir', type=Path, default=ROOT / 'qb_synergy_dashboard')
+    parser.add_argument('--cache-dir', type=Path)
+    parser.add_argument('--refresh', action='store_true')
+    args = parser.parse_args()
+    build(args.season, args.output_dir, args.refresh, args.cache_dir)

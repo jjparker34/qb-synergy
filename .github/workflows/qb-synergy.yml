@@ -1,0 +1,80 @@
+name: Refresh and deploy QB Synergy
+on:
+  schedule:
+    - cron: '23 13 * * 2,4'
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: Download and validate fresh 2026 data
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - 'qb_synergy_dashboard/**'
+      - 'build_qb_synergy_data.py'
+      - 'qb-synergy-config.json'
+      - 'requirements-qb-synergy.txt'
+      - 'scripts/package_qb_synergy.py'
+      - 'tests/**'
+      - '.github/workflows/qb-synergy.yml'
+concurrency:
+  group: qb-synergy-pages
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-qb-synergy.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: pip install -r requirements-qb-synergy.txt
+      - run: python -m unittest discover -s tests -p 'test_qb_synergy.py'
+      - run: node --test tests/score.test.cjs
+      - name: Refresh configured season
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
+        run: |
+          python - <<'PY'
+          import json
+          from build_qb_synergy_data import build
+          config = json.load(open('qb-synergy-config.json'))
+          build(config['activeSeason'], config['siteDirectory'], refresh=True)
+          PY
+      - name: Validate and package public website
+        run: python scripts/package_qb_synergy.py _site
+      - name: Commit validated data only
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- qb_synergy_dashboard/data
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh QB Synergy season data'
+            git push origin HEAD:main
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy validated site
+        id: deployment
+        uses: actions/deploy-pages@v4

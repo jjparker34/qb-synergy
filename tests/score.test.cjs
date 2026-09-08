@@ -1,0 +1,47 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const S = require('../qb_synergy_dashboard/score.js');
+const thresholds = {score:15,qualified:30,weekly:4};
+function row(id, targets=30, overrides={}) {
+  return {qbId:'q',receiverId:id,team:'T',position:'WR',targets,first_downs:10,explosives:3,
+    epa_per_target:.3,success_rate:.5,cpoe:2,yac_over_expected_per_reception:1,qb_epa_lift:.2,
+    target_share:.3,money_down_target_share:.2,red_zone_target_share:.2,
+    interception_rate:0,money_down_failure_rate:.4,...overrides};
+}
+const apply=rows=>S.apply({pairs:rows,thresholds});
+test('qualification boundaries and identical shared calculation',()=>{
+  const data=apply([row('14',14),row('15',15),row('29',29),row('30',30)]);
+  assert.equal(data.pairs[0].synergyScore,null);
+  assert.equal(typeof data.pairs[1].synergyScore,'number');
+  assert.equal(S.ranked(data.pairs).length,1);
+  for(const r of data.pairs)assert.equal(S.calculate(data,r),r.synergyScore);
+});
+test('missing inputs suppress scores and do not become zero',()=>{
+  assert.equal(apply([row('r',30,{cpoe:null})]).pairs[0].synergyScore,null);
+  assert.equal(S.number(null),null);
+  assert.equal(S.number(0),0);
+  assert.equal(apply([row('r',2)]).pairs[0].synergyScore,null);
+});
+test('RB peers cannot change WR/TE score',()=>{
+  const wr=apply([row('a'),row('b',40,{epa_per_target:.7})]).pairs[0].synergyScore;
+  const withRb=apply([row('a'),row('b',40,{epa_per_target:.7}),row('c',50,{position:'RB',epa_per_target:9})]);
+  assert.equal(withRb.pairs[0].synergyScore,wr);
+});
+test('weekly pools are independent; weekly minimum differs from season',()=>{
+  const week1={pairs:[row('a',4),row('b',3)],thresholds};
+  S.apply(week1,{weekly:true});const score=week1.pairs[0].synergyScore;
+  S.apply({pairs:[row('x',20,{epa_per_target:20})],thresholds},{weekly:true});
+  assert.equal(week1.pairs[0].synergyScore,score);assert.notEqual(score,null);
+  assert.equal(week1.pairs[1].synergyScore,null);
+});
+test('recent view uses its own raw rows, without changing season rows',()=>{
+  const season=apply([row('a',60)]);const recent=apply([row('a',10)]);
+  assert.notEqual(season.pairs[0].synergyScore,null);assert.equal(recent.pairs[0].synergyScore,null);
+});
+test('rank changes use matching filters, stable identity and new qualification',()=>{
+  const previous=[{...row('a'),synergyScore:80},{...row('b',14),synergyScore:null}];
+  const current=[{...row('a'),synergyScore:70},{...row('b'),synergyScore:90}];
+  const changes=S.rankChanges(current,previous,{position:'WR',minimum:30});
+  assert.equal(changes.get(S.id(current[0])),-1);assert.equal(changes.get(S.id(current[1])),'New');
+  assert.equal(S.rankChanges(current,previous,{position:'RB',minimum:30}).size,0);
+});

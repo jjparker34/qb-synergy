@@ -2,3 +2,9 @@
 *-check.png
 playoffs-top-check.png
 qb-receiver-skill-detail.png
+
+# Local dashboard verification and deployment staging
+.playwright-cli/
+__pycache__/
+qb_synergy_dashboard/output/
+_site/
