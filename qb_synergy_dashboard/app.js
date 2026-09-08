@@ -87,10 +87,33 @@
     const available = manifest.seasons.filter(s => s !== season);
     $('#content').innerHTML = `<section class="empty"><h2>${scope === 'POST' ? 'No playoff connections yet' : `No ${season} connections yet`}</h2><p>${scope === 'POST' ? 'Playoff results will appear after postseason games are available.' : 'The dashboard will populate after nflverse publishes receiver-tagged pass attempts.'}</p><p>Automatic source checks run Tuesday and Thursday.</p>${available.map(s => `<a href="${url(page === 'explorer' ? 'index.html' : 'top-connections.html', null, {season:s,scope:'REG'})}">Explore the ${s} season →</a>`).join('<br>')}</section>`;
   }
-  function scoreDetail(row) {
+  function scoreBreakdown(row, weekly = false) {
     const detail = row.scoreDetail;
     const sections = ['Outcome', 'Trust', 'Duo lift'];
-    return `<details class="score-explanation"><summary>How this score is calculated</summary><div class="score-detail-grid">${sections.map(section => `<section><h3>${section}</h3>${detail.components.filter(c=>c.group===section).map(c=>`<p><span>${esc(c.label)}</span><b>${fmt(c.points,1)} / ${c.weight}</b></p>`).join('')}</section>`).join('')}</div><p>Negative-play penalty: ${fmt(detail.penalty,1)} / 5. ${detail.peers} eligible ${S.group(row)==='RB'?'RB':'WR/TE'} peers; ${detail.minimum}+ targets. Efficiency is stabilized toward the peer baseline. Missing model inputs suppress the composite rather than counting as zero. A score is a connection measure, not a player grade.</p></details>`;
+    const total = detail.components.every(c=>c.points!==null) ? detail.components.reduce((sum,c)=>sum+c.points,0) : null;
+    return `<div class="score-detail-grid">${sections.map(section => {
+      const components = detail.components.filter(c=>c.group===section);
+      const subtotal = components.every(c=>c.points!==null) ? components.reduce((sum,c)=>sum+c.points,0) : null;
+      return `<section><h3>${section} <span>${fmt(subtotal,2)} / ${components.reduce((sum,c)=>sum+c.weight,0)}</span></h3>${components.map(c=>`<p><span>${esc(c.label)}</span><b>${fmt(c.points,2)} / ${c.weight}</b></p>`).join('')}</section>`;
+    }).join('')}</div><div class="score-penalties"><p>Interception penalty <b>${fmt(detail.turnoverPenalty,2)} / 3</b></p><p>Failed 3rd/4th-down penalty <b>${fmt(detail.moneyPenalty,2)} / 2</b></p></div><p class="score-equation">${fmt(total,2)} component points − ${fmt(detail.penalty,2)} penalty points = <strong style="color:${S.color(row.synergyScore)}">${fmt(row.synergyScore)} / 100</strong> <span>(rounded)</span></p><p class="score-context">${detail.peers} eligible ${S.group(row)==='RB'?'RB':'WR/TE'} peers${weekly?' from this week':''}; ${detail.minimum}+ targets. Efficiency is stabilized toward the ${weekly?'weekly ':''}peer baseline using targets / (targets + ${weekly?8:40}). Missing model inputs suppress the composite rather than counting as zero.</p>`;
+  }
+  function scoreDetail(row) {
+    return `<details class="score-explanation"><summary>How this score is calculated</summary>${scoreBreakdown(row)}</details>`;
+  }
+  function showWeeklyScore(week, identity) {
+    const row = data.weekly.find(item=>item.week===week)?.pairs.find(item=>S.id(item)===identity);
+    if (!row || S.number(row.synergyScore)===null) return;
+    const panel=$('#weeklyScoreDetail');
+    document.querySelectorAll('.history-point').forEach(point=>point.setAttribute('aria-expanded',String(Number(point.dataset.week)===week)));
+    panel.innerHTML=`<div class="section-head"><div><h2 id="weeklyScoreHeading">Week ${week} score calculation</h2><p>${esc(pairName(row))} · ${fmt(row.targets)} targets · <strong style="color:${S.color(row.synergyScore)}">${fmt(row.synergyScore)} / 100</strong></p></div><button id="closeWeeklyScore" aria-label="Close weekly score calculation">Close</button></div>${scoreBreakdown(row,true)}`;
+    panel.hidden=false;
+    $('#closeWeeklyScore').onclick=()=>{
+      panel.hidden=true;
+      const point=document.querySelector(`.history-point[data-week="${week}"]`);
+      point?.setAttribute('aria-expanded','false');
+      point?.focus();
+    };
+    panel.scrollIntoView({block:'nearest',behavior:'auto'});
   }
   function scoreRing(row) {
     return `<button class="score-ring" id="scoreRing" style="--score-color:${S.color(row.synergyScore)};--score-progress:${row.synergyScore??0}%" aria-label="Synergy Score ${fmt(row.synergyScore)} out of 100. Show calculation" aria-controls="scoreExplanation" aria-expanded="false"><span class="score-ring-inner" aria-hidden="true"><span class="score-number" id="scoreValue">${fmt(row.synergyScore)}</span><span class="score-caption">/ 100</span></span></button>`;
@@ -126,7 +149,7 @@
       if (!p.row || S.number(p.row.synergyScore) === null) {previous=null;continue;}
       path += `${previous === p.week-1 ? 'L':'M'}${x(p.week)},${y(p.row.synergyScore)} `;previous=p.week;
     }
-    return `<section class="trend"><div class="section-head"><h2>Weekly synergy</h2><p>Weekly results · ${data.thresholds.weekly}+ targets<br>Gaps indicate a bye, low sample, or missing inputs</p></div><svg class="history" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weekly Synergy Score, using peers from each individual week">${[0,50,100].map(n=>`<line x1="${L}" x2="${W-R}" y1="${y(n)}" y2="${y(n)}"/><text x="0" y="${y(n)+4}">${n}</text>`).join('')}<path d="${path}"/>${points.filter(p=>p.row && S.number(p.row.synergyScore)!==null).map(p=>`<circle tabindex="0" role="img" aria-label="Week ${p.week}: ${p.row.synergyScore} score, ${p.row.targets} targets" cx="${x(p.week)}" cy="${y(p.row.synergyScore)}" r="4" style="fill:${S.color(p.row.synergyScore)}"><title>Week ${p.week}: ${p.row.synergyScore} · ${p.row.targets} targets</title></circle>`).join('')}${Array.from({length:last-first+1},(_,i)=>first+i).filter(w=>w===first||w===last||(w-first)%2===0).map(w=>`<text x="${x(w)}" y="${H-4}" text-anchor="middle">${w}</text>`).join('')}</svg><p id="historyReadout" class="section-note">Select or focus a point for its week and target count.</p></section>`;
+    return `<section class="trend"><div class="section-head"><h2>Weekly synergy</h2><p>Weekly results · ${data.thresholds.weekly}+ targets<br>Gaps indicate a bye, low sample, or missing inputs</p></div><svg class="history" viewBox="0 0 ${W} ${H}" role="group" aria-label="Weekly Synergy Score, using peers from each individual week">${[0,50,100].map(n=>`<line x1="${L}" x2="${W-R}" y1="${y(n)}" y2="${y(n)}"/><text x="0" y="${y(n)+4}">${n}</text>`).join('')}<path d="${path}"/>${points.filter(p=>p.row && S.number(p.row.synergyScore)!==null).map(p=>`<g class="history-point" data-week="${p.week}" tabindex="0" role="button" aria-controls="weeklyScoreDetail" aria-expanded="false" aria-label="Week ${p.week}: ${p.row.synergyScore} score, ${p.row.targets} targets. Show score calculation"><circle class="history-hit" cx="${x(p.week)}" cy="${y(p.row.synergyScore)}" r="12"/><circle class="history-marker" cx="${x(p.week)}" cy="${y(p.row.synergyScore)}" r="4" style="fill:${S.color(p.row.synergyScore)}"/><title>Week ${p.week}: ${p.row.synergyScore} score, ${p.row.targets} targets</title></g>`).join('')}${Array.from({length:last-first+1},(_,i)=>first+i).filter(w=>w===first||w===last||(w-first)%2===0).map(w=>`<text x="${x(w)}" y="${H-4}" text-anchor="middle">${w}</text>`).join('')}</svg><p id="historyReadout" class="section-note">Select a point to see its weekly score calculation.</p><section id="weeklyScoreDetail" class="weekly-score-detail" aria-labelledby="weeklyScoreHeading" hidden></section></section>`;
   }
   function renderExplorer() {
     const row = selected;
@@ -146,9 +169,11 @@
     $('#treePosition').onchange=e=>{treeState.position=e.target.value;renderTree(pairs);};
     $('#treeLimit').onchange=e=>{treeState.limit=e.target.value;renderTree(pairs);};
     renderTree(pairs); bindGlossary(); animateScore(row.synergyScore);
-    document.querySelectorAll('.history circle').forEach(point=>{
+    document.querySelectorAll('.history-point').forEach(point=>{
       const read=()=>$('#historyReadout').textContent=point.getAttribute('aria-label');
-      point.onfocus=read;point.onclick=read;point.onmouseenter=read;
+      const open=()=>{read();showWeeklyScore(Number(point.dataset.week),S.id(row));};
+      point.onfocus=read;point.onclick=open;point.onmouseenter=read;
+      point.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
     });
   }
   function renderTree(pairs) {
