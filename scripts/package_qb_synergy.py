@@ -20,7 +20,7 @@ if '--check' not in sys.argv:
     destination=Path(sys.argv[1]).resolve()
     destination.mkdir(parents=True,exist_ok=True)
     for name in ['index.html','top-connections.html','methodology.html','404.html','favicon.svg',
-                 'player-placeholder.svg','styles.css','app.js','teams.js','score.js']:
+                 'player-placeholder.svg','styles.css','app.js','teams.js','score.js','search.js']:
         shutil.copy2(source/name,destination/name)
     shutil.copytree(source/'data',destination/'data',dirs_exist_ok=True)
     (destination/'.nojekyll').touch()

@@ -45,12 +45,14 @@
     renderExplorer();
   }
   function renderSearch() {
-    const normalize = text => String(text).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ');
-    const words = normalize($('#pairSearch').value).split(/\s+/).filter(Boolean);
-    const hits = words.length ? view.pairs.filter(r => words.every(w => normalize(`${pairName(r)} ${r.qb} ${r.receiver} ${teamName(r)} ${r.team} ${r.position}`).includes(w)))
-      .sort((a,b) => b.targets-a.targets).slice(0, 7) : [];
-    $('#searchResults').innerHTML = hits.map((r,i) => `<button class="search-hit" data-hit="${i}">${esc(pairName(r))}<small>${esc(r.team)} · ${r.position} · ${fmt(r.targets)} targets</small></button>`).join('')
-      || (words.length ? '<p class="search-hit">No connections in this season and view.</p>' : '');
+    const term = $('#pairSearch').value.trim();
+    if (!term) {$('#searchResults').innerHTML='';return;}
+    if (!view) {$('#searchResults').innerHTML='<p class="search-hit">Loading season data…</p>';return;}
+    const hits = window.QBSynergySearch.find(view.pairs, term, TEAM);
+    const archive = manifest.seasons.find(s=>s!==season);
+    const emptyMessage = !view.pairs.length ? `<p class="search-hit">No ${season} ${esc(scopeLabels[scope].toLowerCase())} connections are available in this view.${archive?`<br><a href="${url(page==='explorer'?'index.html':'top-connections.html',null,{season:archive,scope:'REG',window:'season',search:term})}">Search the ${archive} archive →</a>`:''}</p>`
+      : `<p class="search-hit">No matching players or teams in ${season} · ${esc(scopeLabels[scope])} · ${esc(windowLabel())}.</p>`;
+    $('#searchResults').innerHTML = hits.map((r,i) => `<button class="search-hit" data-hit="${i}">${esc(pairName(r))}<small>${esc(teamName(r))} (${esc(r.team)}) · ${r.position} · ${fmt(r.targets)} targets</small></button>`).join('') || emptyMessage;
     $('#searchResults').querySelectorAll('button').forEach(b => b.onclick = () => {
       $('#pairSearch').value = ''; $('#searchResults').innerHTML = ''; choose(hits[Number(b.dataset.hit)]);
     });
@@ -235,6 +237,8 @@
     const missingSelection=page==='explorer'&&query.has('qb')&&query.has('receiver')&&!requested;
     selected=missingSelection?null:requested||[...view.pairs].sort((a,b)=>b.targets-a.targets)[0];
     renderContext();
+    if(query.get('search'))$('#pairSearch').value=query.get('search');
+    renderSearch();
     if(!view.pairs.length){empty();return;}
     if(missingSelection){
       $('#content').innerHTML=`<section class="empty"><h2>No targets for this connection in this view</h2><p>The selected players have no recorded connection in this season, scope, and time window. Search for another connection or change the view.</p><a href="${url('index.html')}">Browse connections in this view →</a></section>`;

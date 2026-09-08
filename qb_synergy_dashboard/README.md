@@ -26,7 +26,7 @@ missing-input handling and weekly comparison pools.
 
 ```powershell
 python -m unittest discover -s tests -p test_qb_synergy.py
-node --test tests/score.test.cjs
+node --test tests/score.test.cjs tests/search.test.cjs
 python scripts/package_qb_synergy.py --check
 python -m http.server 8765 --directory qb_synergy_dashboard
 ```
