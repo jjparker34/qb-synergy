@@ -23,7 +23,7 @@
   const photo = (r, role, className = '') => `<img class="${className}" src="${esc(r[`${role}Photo`] || 'player-placeholder.svg')}" alt="${esc(full(r, role))}" loading="lazy">`;
   const status = r => r.targets < data.thresholds.score ? `Raw stats · ${data.thresholds.score} targets to score`
     : S.number(r.synergyScore) === null ? 'Score unavailable · missing inputs'
-    : r.targets < data.thresholds.qualified ? 'Provisional' : 'Qualified';
+    : `${r.targets < data.thresholds.qualified ? 'Provisional' : 'Qualified'}${r.scoreDetail?.components.some(c=>c.modelUnavailable)?' · YAC model unavailable':''}`;
   function url(name, row, changes = {}) {
     const params = new URLSearchParams({season: String(season), scope, window: timeWindow});
     if (row) {params.set('qb', row.qbId); params.set('receiver', row.receiverId); params.set('team', row.team);}

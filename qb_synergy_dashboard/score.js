@@ -1,4 +1,4 @@
-/* Shared by every view and Node verification. No receptions earn no YAC credit; missing raw inputs stay unavailable. */
+/* Shared by every view and Node verification. YAC credit requires modeled receptions; missing raw inputs stay unavailable. */
 (function (root) {
   'use strict';
   const components = [
@@ -55,9 +55,12 @@
         .map(key => [key, eligible.map(row => number(row[key])).filter(v => v !== null)]));
       for (const row of peers) {
         const detail = components.map(([section, label, key, weight]) => {
-          if (key === 'scoreYacoe' && number(row.receptions) === 0) {
+          if (key === 'scoreYacoe' && (number(row.receptions) === 0 || number(row[key]) === null)) {
+            const modelUnavailable = number(row.receptions) !== 0;
             return {group: section, label, weight, points: 0,
-              note: 'No receptions: YAC contributes 0 of its 7 points.'};
+              modelUnavailable,
+              note: modelUnavailable ? 'YAC model unavailable: 0 of the 7 YAC points awarded.'
+                : 'No receptions: YAC contributes 0 of its 7 points.'};
           }
           const pct = percentile(samples[key], row[key]);
           return {group: section, label, weight, points: pct === null ? null : weight * Math.round(pct) / 100};

@@ -20,7 +20,7 @@ test('missing inputs suppress scores and do not become zero',()=>{
   assert.equal(apply([row('r',30,{cpoe:null})]).pairs[0].synergyScore,null);
   assert.equal(S.number(null),null);
   assert.equal(S.number(0),0);
-  assert.equal(apply([row('r',1,{yac_over_expected_per_reception:null})]).pairs[0].synergyScore,null);
+  assert.equal(typeof apply([row('r',1,{yac_over_expected_per_reception:null})]).pairs[0].synergyScore,'number');
   assert.equal(typeof S.apply({pairs:[row('r',1)]}).pairs[0].synergyScore,'number');
 });
 test('zero receptions earn zero YAC points and still produce season and weekly scores',()=>{
@@ -50,13 +50,19 @@ test('an all-incomplete peer pool scores without invented YAC observations',()=>
     assert.equal(r.scoreDetail.components.find(c=>c.label==='YAC over expected / rec').points,0);
   }
 });
-test('a catch with missing YAC data is distinct from no catches',()=>{
+test('a catch with missing YAC data receives a score with explicitly unavailable YAC credit',()=>{
   const caught=row('caught',1,{receptions:1,yac_over_expected_per_reception:null});
   const unknown=row('unknown',1,{receptions:null,yac_over_expected_per_reception:null});
   const otherMissing=row('other',1,{receptions:0,cpoe:null,yac_over_expected_per_reception:null});
   apply([caught,unknown,otherMissing]);
-  for(const r of [caught,unknown,otherMissing])assert.equal(r.synergyScore,null);
-  for(const r of [caught,unknown])assert.equal(r.scoreDetail.components.find(c=>c.label==='YAC over expected / rec').points,null);
+  assert.equal(otherMissing.synergyScore,null);
+  for(const r of [caught,unknown]){
+    assert.equal(typeof r.synergyScore,'number');
+    const yac=r.scoreDetail.components.find(c=>c.label==='YAC over expected / rec');
+    assert.equal(yac.points,0);assert.equal(yac.modelUnavailable,true);
+    assert.match(yac.note,/YAC model unavailable/);
+    assert.equal(r.yac_over_expected_per_reception,null);
+  }
 });
 test('RB peers cannot change WR/TE score',()=>{
   const wr=apply([row('a'),row('b',40,{epa_per_target:.7})]).pairs[0].synergyScore;
@@ -75,7 +81,7 @@ test('weekly pools and stabilization are independent from season scores',()=>{
 });
 test('one-target weekly scores require real targets and complete inputs in every scope',()=>{
   for(const scopeThresholds of [thresholds,{score:1,qualified:5,weekly:1},undefined]) {
-    const pairs=[row('zero',0),row('one',1),row('missing',1,{yac_over_expected_per_reception:null})];
+    const pairs=[row('zero',0),row('one',1),row('missing',1,{cpoe:null})];
     S.apply({pairs,thresholds:scopeThresholds},{weekly:true});
     assert.equal(pairs[0].synergyScore??null,null);
     assert.equal(typeof pairs[1].synergyScore,'number');

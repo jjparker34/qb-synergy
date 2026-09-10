@@ -27,9 +27,10 @@ Season-to-date and last-four-week scores are provisional below 30 targets (5 in 
 default to provisional scores until qualified connections exist; All connections also includes rows
 with unavailable scores. Weekly scores use their own peer pool and stabilization.
 
-Method 2026.2 gives connections with zero receptions 0 of the 7 YAC component points, so no catches
-alone do not prevent a score. Raw YAC per reception remains unavailable and those connections are
-excluded from YAC comparison samples. Other missing model inputs still suppress the composite.
+Method 2026.2 awards YAC points only when modeled receptions are available. Zero receptions or missing
+YAC model coverage receive 0 of the 7 YAC points; the rest of the score is calculated normally. Missing
+YAC model coverage is labeled beside the score and in its explanation. Raw YAC per reception remains
+unavailable and is excluded from YAC comparison samples. Other missing model inputs still suppress the composite.
 
 ## Verification
 
