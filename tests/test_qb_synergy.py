@@ -108,6 +108,53 @@ class BuilderTests(unittest.TestCase):
         self.assertIsNone(r['yac_per_reception'])
         self.assertIsNone(r['yac'])
 
+    def test_red_zone_share_uses_all_team_quarterbacks_and_receiver_positions(self):
+        players,pbp,_=fixtures()
+        players=pd.concat([players,pd.DataFrame([
+            dict(gsis_id='q2',position='QB',display_name='Second Quarterback'),
+            dict(gsis_id='lineman',position='OT',display_name='Eligible Lineman')])],ignore_index=True)
+        pbp.loc[pbp.week.eq(2),['passer_player_id','passer_player_name']]=['q2','Second.QB']
+        pbp.loc[pbp.week.eq(4),'posteam']='TEN'
+        unusual=pbp.iloc[:2].copy()
+        unusual['play_id']=[901,902]
+        unusual['receiver_player_id']='lineman'
+        unusual['receiver_player_name']='Eligible.Lineman'
+        unusual.loc[unusual.index[1],['week','game_id']]=[3,'g3']
+        plays=builder.prepare(pd.concat([pbp,unusual]),players)
+        totals=builder.team_red_zone_totals(plays)
+        self.assertEqual(totals,{'JAX':42,'TEN':20})
+        pairs=builder.aggregate(plays,players)
+        builder.validate_rows(pairs,totals)
+        self.assertFalse(any(r['receiverId']=='lineman' for r in pairs))
+        for row in pairs:
+            self.assertEqual(row['team_red_zone_targets'],totals[row['team']])
+            self.assertEqual(row['qb_red_zone_targets'],20)
+            self.assertAlmostEqual(row['red_zone_target_share'],row['red_zone_targets']/totals[row['team']],places=7)
+        first=plays.loc[plays.week.eq(1)]
+        self.assertEqual(builder.aggregate(first,players)[0]['team_red_zone_targets'],21)
+        context_only=plays.loc[plays.week.eq(3)]
+        self.assertEqual(builder.aggregate(context_only,players),[])
+        self.assertEqual(builder.team_red_zone_totals(context_only),{'JAX':1})
+        bad=copy.deepcopy(pairs)
+        for row in bad:
+            if row['team']=='JAX':
+                row['team_red_zone_targets']=41
+                row['red_zone_target_share']=row['red_zone_targets']/41
+        with self.assertRaisesRegex(ValueError,'team red-zone denominator'):
+            builder.validate_rows(bad,totals)
+
+    def test_red_zone_boundaries_and_zero_team_opportunities(self):
+        players,pbp,_=fixtures()
+        pbp['yardline_100']=21
+        pbp.loc[0,'yardline_100']=20
+        plays=builder.prepare(pbp,players)
+        pairs=builder.aggregate(plays,players)
+        self.assertEqual(builder.team_red_zone_totals(plays),{'JAX':1})
+        self.assertEqual(next(r for r in pairs if r['receiverId']=='r')['red_zone_target_share'],1)
+        self.assertEqual(next(r for r in pairs if r['receiverId']=='00-0040718')['red_zone_target_share'],0)
+        later=builder.aggregate(plays.loc[plays.week.gt(1)],players)
+        self.assertTrue(all(r['team_red_zone_targets']==0 and r['red_zone_target_share'] is None for r in later))
+
     def test_bad_source_rows_stop_aggregation(self):
         players,pbp,_=fixtures()
         bad_sources=[pd.concat([pbp,pbp.iloc[:1]])]

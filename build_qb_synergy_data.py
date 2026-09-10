@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent
 PLAYERS_URL = 'https://github.com/nflverse/nflverse-data/releases/download/players/players.csv'
 SCHEDULE_URL = 'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv'
 SCOPES = {'REG': 'Regular season', 'POST': 'Playoffs', 'ALL': 'Regular season + playoffs'}
-METHOD_VERSION = '2026.3'
+METHOD_VERSION = '2026.4'
 RECEIVER_POSITION_OVERRIDES = {'00-0040718': 'WR'}  # Travis Hunter's receiving plays
 GROUP = ['passer_player_id', 'receiver_player_id', 'posteam']
 COLS = ['season', 'season_type', 'game_id', 'play_id', 'play_type', 'two_point_attempt', 'week', 'posteam', 'passer_player_id',
@@ -81,7 +81,7 @@ def prepare(pbp, players):
         raise ValueError('Receiver missing from player metadata; publication stopped')
     plays['listedPosition'] = plays.position
     plays['position'] = plays.position.replace({'FB': 'RB'})
-    plays = plays.loc[plays.position.isin(['WR', 'TE', 'RB'])].copy()
+    # Keep every receiver position until team opportunity totals have been counted.
     for field in ['complete_pass', 'pass_touchdown', 'interception', 'first_down_pass']:
         if not plays[field].isin([0, 1]).all():
             raise ValueError(f'Missing or invalid {field} on receiving plays')
@@ -115,7 +115,14 @@ def prepare(pbp, players):
 def ratio(a, b):
     return a / b.replace(0, float('nan'))
 
+def team_red_zone_totals(plays):
+    return {team: int(total) for team, total in plays.groupby('posteam').red_zone_targets.sum().items()}
+
 def aggregate(plays, players):
+    if plays.empty:
+        return []
+    team_red_zone = team_red_zone_totals(plays)
+    plays = plays.loc[plays.position.isin(['WR', 'TE', 'RB'])].copy()
     if plays.empty:
         return []
     sums = ['receptions', 'yards', 'td', 'interceptions', 'first_downs', 'yac', 'expected_yac',
@@ -136,13 +143,14 @@ def aggregate(plays, players):
          qb_epa=('epa', lambda x: x.sum() if x.notna().all() else float('nan')),
          qb_red_zone_targets=('red_zone_targets', 'sum'), qb_money_down_targets=('money_down_targets', 'sum'))
     pairs = pairs.join(qb, on=qb_group)
+    pairs['team_red_zone_targets'] = pairs.posteam.map(team_red_zone)
     divisions = {'catch_rate': ('receptions', 'targets'), 'yards_per_target': ('yards', 'targets'),
         'yac_per_reception': ('yac', 'receptions'), 'epa_per_target': ('epa', 'targets'),
         'target_share': ('targets', 'qb_targets'), 'money_down_rate': ('money_down_targets', 'targets'),
         'interception_rate': ('interceptions', 'targets'),
         'money_down_failure_rate': ('money_down_failures', 'money_down_targets'),
         'money_down_target_share': ('money_down_targets', 'qb_money_down_targets'),
-        'red_zone_target_share': ('red_zone_targets', 'qb_red_zone_targets')}
+        'red_zone_target_share': ('red_zone_targets', 'team_red_zone_targets')}
     for name, (a, b) in divisions.items():
         pairs[name] = ratio(pairs[a], pairs[b])
     pairs['qb_epa_lift'] = pairs.epa_per_target - ratio(pairs.qb_epa - pairs.epa, pairs.qb_targets - pairs.targets)
@@ -190,9 +198,13 @@ def coverage(pbp, schedule, scope):
     included = int(scoped.week.max()) if len(scoped) else None
     return sorted(ids), completed, included
 
-def validate_rows(rows):
+def validate_rows(rows, team_red_zone=None):
     identities = set()
     quarterback_rows = {}
+    team_rows = {}
+    if team_red_zone is not None:
+        if not isinstance(team_red_zone, dict) or any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 or v != int(v) for v in team_red_zone.values()):
+            raise ValueError('Invalid team red-zone opportunity totals')
     count_limits = {'receptions': 'targets', 'td': 'receptions', 'interceptions': 'targets',
         'first_downs': 'receptions', 'explosives': 'receptions', 'money_down_targets': 'targets',
         'red_zone_targets': 'targets', 'money_down_failures': 'money_down_targets',
@@ -204,7 +216,7 @@ def validate_rows(rows):
         'money_down_rate': ('money_down_targets', 'targets'), 'interception_rate': ('interceptions', 'targets'),
         'money_down_failure_rate': ('money_down_failures', 'money_down_targets'),
         'money_down_target_share': ('money_down_targets', 'qb_money_down_targets'),
-        'red_zone_target_share': ('red_zone_targets', 'qb_red_zone_targets')}
+        'red_zone_target_share': ('red_zone_targets', 'team_red_zone_targets')}
     def matches(actual, expected):
         return actual is None if expected is None else isinstance(actual, (int, float)) and math.isclose(actual, expected, abs_tol=1e-7, rel_tol=1e-7)
     for row in rows:
@@ -223,6 +235,11 @@ def validate_rows(rows):
                 raise ValueError(f'Invalid {key} count: {identity}')
         if row['interceptions'] + row['receptions'] > row['targets'] or row['games'] == 0:
             raise ValueError(f'Inconsistent receiving counts: {identity}')
+        total = row.get('team_red_zone_targets')
+        if not isinstance(total, (int, float)) or not math.isfinite(total) or total != int(total) or total < row['red_zone_targets']:
+            raise ValueError(f'Invalid team red-zone opportunity count: {identity}')
+        if team_red_zone is not None and (row['team'] not in team_red_zone or total != team_red_zone[row['team']]):
+            raise ValueError(f'Incorrect team red-zone denominator: {identity}')
         for key, (numerator, denominator) in ratios.items():
             expected = row[numerator] / row[denominator] if row[numerator] is not None and row[denominator] > 0 else None
             if key not in row or not matches(row[key], expected):
@@ -232,6 +249,11 @@ def validate_rows(rows):
         if row['cpoe_targets'] > 0 and row['cpoe'] is None or row['modeled_receptions'] > 0 and row['yac_over_expected_per_reception'] is None:
             raise ValueError(f'Observations without a model value: {identity}')
         quarterback_rows.setdefault((row['qbId'], row['team']), []).append(row)
+        team_rows.setdefault(row['team'], []).append(row)
+    for team, peers in team_rows.items():
+        total = peers[0]['team_red_zone_targets']
+        if any(r['team_red_zone_targets'] != total for r in peers) or sum(r['red_zone_targets'] for r in peers) > total:
+            raise ValueError(f'Inconsistent team red-zone denominator: {team}')
     for identity, peers in quarterback_rows.items():
         sums = {'qb_targets': sum(r['targets'] for r in peers),
                 'qb_money_down_targets': sum(r['money_down_targets'] for r in peers),
@@ -249,11 +271,15 @@ def validate_rows(rows):
 
 def validate(payload, previous=None):
     json.dumps(payload, allow_nan=False)
-    validate_rows(payload['pairs'])
+    if payload.get('methodVersion') == METHOD_VERSION and ('teamRedZoneTargets' not in payload or 'recent' in payload and 'recentTeamRedZoneTargets' not in payload):
+        raise ValueError('Missing team red-zone opportunity totals')
+    validate_rows(payload['pairs'], payload.get('teamRedZoneTargets'))
     if 'recent' in payload:
-        validate_rows(payload['recent'])
+        validate_rows(payload['recent'], payload.get('recentTeamRedZoneTargets'))
     for weekly in payload.get('weekly', []):
-        validate_rows(weekly['pairs'])
+        if payload.get('methodVersion') == METHOD_VERSION and 'teamRedZoneTargets' not in weekly:
+            raise ValueError('Missing weekly team red-zone opportunity totals')
+        validate_rows(weekly['pairs'], weekly.get('teamRedZoneTargets'))
     if payload.get('methodVersion') is not None and payload['methodVersion'] != METHOD_VERSION:
         raise ValueError('Dataset requires a rebuild for the current scoring method')
     if previous and not set(previous.get('gameIds', [])).issubset(payload['gameIds']):
@@ -315,17 +341,23 @@ def build(season, output_dir, refresh=False, cache_dir=None):
                     latestIncludedWeek=included, latestCompletedWeek=completed[-1] if completed else None,
                     firstWeek=first, gameIds=game_ids, thresholds=thresholds,
                     excludedTwoPointTargets=len(excluded_conversions))
-        payload = dict(meta, pairs=aggregate(scoped, players), status='available' if len(scoped) else 'pending')
-        payload['recent'] = aggregate(scoped.loc[scoped.week.ge(included - 3)], players) if included else []
+        payload = dict(meta, pairs=aggregate(scoped, players), teamRedZoneTargets=team_red_zone_totals(scoped),
+                       status='available' if len(scoped) else 'pending')
+        recent = scoped.loc[scoped.week.ge(included - 3)] if included else scoped.iloc[:0]
+        payload['recent'] = aggregate(recent, players)
+        payload['recentTeamRedZoneTargets'] = team_red_zone_totals(recent)
         payload['recentStartWeek'] = max(first, included - 3) if included else None
-        payload['weekly'] = [{'week': int(week), 'pairs': aggregate(rows, players)} for week, rows in scoped.groupby('week', sort=True)]
+        payload['weekly'] = [{'week': int(week), 'pairs': aggregate(rows, players),
+                              'teamRedZoneTargets': team_red_zone_totals(rows)} for week, rows in scoped.groupby('week', sort=True)]
         payload['snapshotWeeks'] = completed
         validate(payload, previous)
         generated[f'{scope}.json'] = payload
         for week in completed:
             subset = scoped.loc[scoped.week.le(week)]
+            recent_subset = subset.loc[subset.week.ge(week - 3)]
             snapshot = dict(meta, throughWeek=week, pairs=aggregate(subset, players),
-                            recent=aggregate(subset.loc[subset.week.ge(week - 3)], players))
+                            recent=aggregate(recent_subset, players), teamRedZoneTargets=team_red_zone_totals(subset),
+                            recentTeamRedZoneTargets=team_red_zone_totals(recent_subset))
             snapshot.update(latestIncludedWeek=week, latestCompletedWeek=week,
                             recentStartWeek=max(first, week - 3),
                             excludedTwoPointTargets=int(excluded_conversions.week.le(week).sum()))

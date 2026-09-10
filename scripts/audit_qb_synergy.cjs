@@ -4,7 +4,7 @@ const S=require('../qb_synergy_dashboard/score.js');
 const site=path.join(__dirname,'../qb_synergy_dashboard');
 const read=file=>JSON.parse(fs.readFileSync(path.join(site,file),'utf8'));
 const report={methodVersion:S.methodVersion,files:0,views:0,scoreInstances:0,unavailable:0,
-  zeroEventChecks:0,noOpportunityChecks:0,arithmeticChecks:0,aggregationChecks:0,
+  zeroEventChecks:0,noOpportunityChecks:0,arithmeticChecks:0,aggregationChecks:0,teamRedZoneChecks:0,
   positions:{},scopes:[],examples:[]};
 const countFields=['targets','receptions','yards','td','interceptions','first_downs','explosives',
   'red_zone_targets','money_down_targets','money_down_failures','modeled_receptions','cpoe_targets','success_targets','successful_targets'];
@@ -19,7 +19,18 @@ const close=(a,b,message)=>assert.ok(a===null&&b===null || typeof a==='number'&&
 const expectedWeights=[23,16,6,8,7,14,7,4,12,3];
 assert.deepEqual(S.components.map(c=>c[3]),expectedWeights,'Scoring weights changed');
 
-function inspect(raw,thresholds,context,weekly=false) {
+function inspect(raw,thresholds,context,weekly=false,teamRedZone) {
+  assert.ok(teamRedZone&&typeof teamRedZone==='object',`${context}: missing team red-zone totals`);
+  for(const total of Object.values(teamRedZone))assert.ok(Number.isInteger(total)&&total>=0,`${context}: invalid team red-zone total`);
+  const eligibleTotals={};
+  for(const r of raw) {
+    assert.equal(r.team_red_zone_targets,teamRedZone[r.team],`${context}: incorrect team red-zone denominator`);
+    const expected=r.team_red_zone_targets>0?r.red_zone_targets/r.team_red_zone_targets:null;
+    assert.ok(expected===null?r.red_zone_target_share===null:typeof r.red_zone_target_share==='number'&&Math.abs(expected-r.red_zone_target_share)<=1e-7,`${context}: incorrect team red-zone share`);
+    eligibleTotals[r.team]=(eligibleTotals[r.team]||0)+r.red_zone_targets;
+    report.teamRedZoneChecks++;
+  }
+  for(const [team,total] of Object.entries(eligibleTotals))assert.ok(total<=teamRedZone[team],`${context}: receiver totals exceed team targets`);
   const rows=structuredClone(raw);S.apply({pairs:rows,thresholds},{weekly});report.views++;
   const min=thresholds[weekly?'weekly':'score'];
   for(const group of ['WR_TE','RB']) {
@@ -106,8 +117,12 @@ function inspect(raw,thresholds,context,weekly=false) {
   return rows;
 }
 
-function assertWindow(actual,weeks,label) {
+function assertWindow(actual,weeks,label,teamRedZone) {
   const totals=new Map();
+  const teamTotals={};
+  for(const weekly of weeks)for(const [team,total] of Object.entries(weekly.teamRedZoneTargets))teamTotals[team]=(teamTotals[team]||0)+total;
+  assert.deepEqual(teamRedZone,teamTotals,`${label}: team red-zone totals do not reconcile with weekly context`);
+  report.teamRedZoneChecks+=Object.keys(teamTotals).length;
   for(const weekly of weeks)for(const r of weekly.pairs) {
     const entry=totals.get(S.id(r))||Object.fromEntries(countFields.map(key=>[key,0]));
     for(const key of countFields)entry[key]+=r[key];totals.set(S.id(r),entry);
@@ -124,18 +139,18 @@ for(const season of manifest.seasons)for(const scope of ['REG','POST','ALL']) {
   const d=read(`data/${season}/${scope}.json`);report.files++;
   assert.equal(d.methodVersion,S.methodVersion,`${season} ${scope}: rebuild required`);
   assert.deepEqual(d.thresholds,{score:1,qualified:scope==='POST'?5:30,weekly:1});
-  const rows=inspect(d.pairs,d.thresholds,`${season} ${scope} season`);
-  inspect(d.recent,d.thresholds,`${season} ${scope} recent`);
-  for(const w of d.weekly)inspect(w.pairs,d.thresholds,`${season} ${scope} week ${w.week}`,true);
-  assertWindow(d.pairs,d.weekly,`${season} ${scope} season`);
-  assertWindow(d.recent,d.weekly.filter(w=>w.week>=d.latestIncludedWeek-3),`${season} ${scope} recent`);
+  const rows=inspect(d.pairs,d.thresholds,`${season} ${scope} season`,false,d.teamRedZoneTargets);
+  inspect(d.recent,d.thresholds,`${season} ${scope} recent`,false,d.recentTeamRedZoneTargets);
+  for(const w of d.weekly)inspect(w.pairs,d.thresholds,`${season} ${scope} week ${w.week}`,true,w.teamRedZoneTargets);
+  assertWindow(d.pairs,d.weekly,`${season} ${scope} season`,d.teamRedZoneTargets);
+  assertWindow(d.recent,d.weekly.filter(w=>w.week>=d.latestIncludedWeek-3),`${season} ${scope} recent`,d.recentTeamRedZoneTargets);
   for(const week of d.snapshotWeeks) {
     const s=read(`data/${season}/snapshots/${scope}-${week}.json`);report.files++;
     assert.equal(s.methodVersion,S.methodVersion);assert.equal(s.throughWeek,week);
-    inspect(s.pairs,s.thresholds,`${season} ${scope} snapshot ${week}`);
-    inspect(s.recent,s.thresholds,`${season} ${scope} snapshot ${week} recent`);
-    assertWindow(s.pairs,d.weekly.filter(w=>w.week<=week),`${season} ${scope} snapshot ${week}`);
-    assertWindow(s.recent,d.weekly.filter(w=>w.week<=week&&w.week>=week-3),`${season} ${scope} snapshot ${week} recent`);
+    inspect(s.pairs,s.thresholds,`${season} ${scope} snapshot ${week}`,false,s.teamRedZoneTargets);
+    inspect(s.recent,s.thresholds,`${season} ${scope} snapshot ${week} recent`,false,s.recentTeamRedZoneTargets);
+    assertWindow(s.pairs,d.weekly.filter(w=>w.week<=week),`${season} ${scope} snapshot ${week}`,s.teamRedZoneTargets);
+    assertWindow(s.recent,d.weekly.filter(w=>w.week<=week&&w.week>=week-3),`${season} ${scope} snapshot ${week} recent`,s.recentTeamRedZoneTargets);
   }
   report.scopes.push({season,scope,connections:d.pairs.length,scored:rows.filter(r=>r.synergyScore!==null).length,
     games:d.gameIds.length,completedWeek:d.latestCompletedWeek,excludedConversions:d.excludedTwoPointTargets});
@@ -145,8 +160,8 @@ if(process.argv.includes('--output')) {
   fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));
 }
 if(process.env.GITHUB_STEP_SUMMARY) {
-  fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`\n### Score audit ${S.methodVersion} passed\n\n${report.files} datasets/snapshots, ${report.views} views, ${report.scoreInstances} score instances.\n\n${report.zeroEventChecks} zero-event checks, ${report.arithmeticChecks} arithmetic checks, ${report.aggregationChecks} cross-window aggregation checks passed. WR, TE, RB, and FB checked.\n\n`);
+  fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`\n### Score audit ${S.methodVersion} passed\n\n${report.files} datasets/snapshots, ${report.views} views, ${report.scoreInstances} score instances.\n\n${report.zeroEventChecks} zero-event checks, ${report.arithmeticChecks} arithmetic checks, ${report.aggregationChecks} cross-window aggregation checks, and ${report.teamRedZoneChecks} team red-zone checks passed. WR, TE, RB, and FB checked.\n\n`);
 }
 console.log(JSON.stringify({methodVersion:report.methodVersion,files:report.files,views:report.views,scoreInstances:report.scoreInstances,
   unavailable:report.unavailable,zeroEventChecks:report.zeroEventChecks,noOpportunityChecks:report.noOpportunityChecks,
-  arithmeticChecks:report.arithmeticChecks,aggregationChecks:report.aggregationChecks,scopes:report.scopes},null,2));
+  arithmeticChecks:report.arithmeticChecks,aggregationChecks:report.aggregationChecks,teamRedZoneChecks:report.teamRedZoneChecks,scopes:report.scopes},null,2));

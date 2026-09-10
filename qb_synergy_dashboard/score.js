@@ -1,13 +1,13 @@
 /* Shared by the explorer, rankings, weekly history, snapshots, and publication audit. */
 (function (root) {
   'use strict';
-  const methodVersion = '2026.3';
+  const methodVersion = '2026.4';
   const components = [
     ['Outcome', 'EPA / target', 'scoreEpa', 23], ['Outcome', 'Success rate', 'scoreSuccess', 16],
     ['Outcome', 'CPOE', 'scoreCpoe', 6], ['Outcome', 'First-down rate', 'scoreFirstDown', 8],
     ['Outcome', 'YAC over expected / rec', 'scoreYacoe', 7], ['Trust', 'Target share', 'target_share', 14],
     ['Trust', '3rd/4th target share', 'money_down_target_share', 7],
-    ['Trust', 'Red-zone target share', 'red_zone_target_share', 4],
+    ['Trust', 'Team red-zone target share', 'red_zone_target_share', 4],
     ['Duo lift', 'QB EPA lift', 'scoreQbLift', 12], ['Duo lift', 'Explosive rate', 'scoreExplosive', 3]
   ];
   const inputs = {
@@ -24,7 +24,7 @@
     money_down_target_share: ['money_down_targets', 'No 3rd/4th-down targets'],
     red_zone_target_share: ['red_zone_targets', 'No red-zone targets']
   };
-  const opportunities = {money_down_target_share:'qb_money_down_targets', red_zone_target_share:'qb_red_zone_targets'};
+  const opportunities = {money_down_target_share:'qb_money_down_targets', red_zone_target_share:'team_red_zone_targets'};
   const number = v => (typeof v === 'number' || typeof v === 'string' && v.trim() !== '') && Number.isFinite(Number(v)) ? Number(v) : null;
   const group = row => ['RB','FB'].includes(row.position) ? 'RB' : ['WR','TE'].includes(row.position) ? 'WR_TE' : null;
   const id = row => `${row.qbId}:${row.receiverId}:${row.team}`;
@@ -82,7 +82,7 @@
       for (const [key, numerator, denominator] of [
         ['target_share','targets','qb_targets'], ['money_down_rate','money_down_targets','targets'],
         ['money_down_target_share','money_down_targets','qb_money_down_targets'],
-        ['red_zone_target_share','red_zone_targets','qb_red_zone_targets'],
+        ['red_zone_target_share','red_zone_targets','team_red_zone_targets'],
         ['money_down_failure_rate','money_down_failures','money_down_targets'],
         ['interception_rate','interceptions','targets'], ['success_rate','successful_targets','success_targets']
       ]) if (Object.hasOwn(row,numerator) && Object.hasOwn(row,denominator)) row[key] = divide(row[numerator],row[denominator]);
@@ -117,7 +117,7 @@
             result.modelUnavailable = number(row.receptions) !== 0;
             reason = result.modelUnavailable ? 'YAC model unavailable' : 'No receptions';
           } else if (opportunities[key] && number(row[opportunities[key]]) === 0) {
-            result.noOpportunities = true; reason = 'No QB opportunities in this area';
+            result.noOpportunities = true; reason = key === 'red_zone_target_share' ? 'No team red-zone targets' : 'No QB opportunities in this area';
           } else if (zeroEvents[key] && rawValue !== null && (number(row[zeroEvents[key][0]]) === 0 || rawValue === 0)) {
             result.zeroEvent = true; reason = zeroEvents[key][1];
           }

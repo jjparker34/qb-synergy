@@ -19,7 +19,7 @@ not inferred from the calendar year. Keep it at 2026 through the playoffs in 202
 `data/manifest.json` lists seasons. Each season has REG/POST/ALL datasets, recent-window aggregates,
 weekly rows, and corrected cumulative snapshots. Root `data*.json` files retain the corrected legacy 2025
 export but are not shipped in the new artifact. The maintained 2025 archive is rebuilt with corrected
-ordinary-target counts, fullbacks in the RB group, and quarterback/team denominators. Method 2026.3
+ordinary-target counts, fullbacks in the RB group, and quarterback/team denominators. Method 2026.4
 retains the weights and one-target eligibility while correcting zero-event credit, ties, observation
 counts, missing-input handling, and rounding across every season and view.
 
@@ -28,7 +28,7 @@ Season-to-date and last-four-week scores are provisional below 30 targets (5 in 
 default to provisional scores until qualified connections exist; All connections also includes rows
 with unavailable scores. Weekly scores use their own peer pool and stabilization.
 
-Method 2026.3 awards YAC points only when modeled receptions are available. Zero receptions or missing
+Method 2026.4 awards YAC points only when modeled receptions are available. Zero receptions or missing
 YAC model coverage receive 0 of the 7 YAC points; the rest of the score is calculated normally. Missing
 YAC model coverage is labeled beside the score and in its explanation. Raw YAC per reception remains
 unavailable and is excluded from YAC comparison samples. Other missing model inputs still suppress the composite.
@@ -40,12 +40,19 @@ summed as integers before final half-up rounding. Modeled receptions determine Y
 CPOE/success use covered targets, and QB lift uses the smaller of duo and other-receiver target counts.
 The UI exposes sample and coverage flags and uses component points for its profile bars.
 
+Method 2026.4 changes red-zone share to the selected connection's red-zone targets divided by all
+team red-zone targets in the same scope/window. Team totals include every passer and receiver position,
+while the leaderboard still compares WR/TE and RB/FB connections. `teamRedZoneTargets` and
+`recentTeamRedZoneTargets` preserve team context independently of published receiver rows; weekly entries
+also contain `teamRedZoneTargets`, including targets to positions outside the scored groups. The raw
+share is ranked among peers for the existing four-point component. Zero targets earn zero credit.
+
 ## Verification
 
 ```powershell
 python -m unittest discover -s tests -p test_qb_synergy.py
 node --test tests/score.test.cjs tests/search.test.cjs
-node scripts/audit_qb_synergy.cjs --output qb_synergy_dashboard/output/audit/score-validation-2026-3.json
+node scripts/audit_qb_synergy.cjs --output qb_synergy_dashboard/output/audit/score-validation-2026-4.json
 python scripts/package_qb_synergy.py --check
 python -m http.server 8765 --directory qb_synergy_dashboard
 ```

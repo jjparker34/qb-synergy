@@ -112,10 +112,35 @@ function observed(id,position='WR',overrides={}) {
   return {qbId:'q',receiverId:id,team:'T',position,targets:20,receptions:10,first_downs:4,explosives:2,
     interceptions:0,successful_targets:10,success_targets:20,cpoe_targets:20,modeled_receptions:10,
     money_down_targets:4,money_down_failures:0,red_zone_targets:2,qb_targets:100,
-    qb_money_down_targets:20,qb_red_zone_targets:10,epa_per_target:.3,cpoe:2,
+    qb_money_down_targets:20,qb_red_zone_targets:10,team_red_zone_targets:10,epa_per_target:.3,cpoe:2,
     yac_over_expected_per_reception:1,qb_epa_lift:.2,...overrides};
 }
 const component=(r,key)=>r.scoreDetail.components.find(c=>c.key===key);
+
+test('red-zone share uses the team denominator in every position group and window',()=>{
+  for(const position of ['WR','TE','RB','FB'])for(const weekly of [false,true]) {
+    const r=observed('r',position,{red_zone_targets:4,qb_red_zone_targets:5,team_red_zone_targets:20,red_zone_target_share:.8});
+    S.apply({pairs:[r],thresholds},{weekly});
+    assert.equal(r.red_zone_target_share,.2);
+    assert.equal(component(r,'red_zone_target_share').rawValue,.2);
+    assert.equal(component(r,'red_zone_target_share').observations,20);
+    r.qb_red_zone_targets=10;
+    S.apply({pairs:[r],thresholds},{weekly});
+    assert.equal(r.red_zone_target_share,.2);
+    assert.equal(component(r,'red_zone_target_share').points,2);
+  }
+});
+
+test('zero team red-zone opportunities differ from zero targets with team opportunities',()=>{
+  const none=observed('none','RB',{red_zone_targets:0,qb_red_zone_targets:0,team_red_zone_targets:0});
+  const unused=observed('unused','RB',{red_zone_targets:0,qb_red_zone_targets:0,team_red_zone_targets:20});
+  apply([none,unused]);
+  const a=component(none,'red_zone_target_share'),b=component(unused,'red_zone_target_share');
+  assert.equal(a.rawValue,null);assert.equal(a.points,0);assert.equal(a.noOpportunities,true);
+  assert.match(a.note,/No team red-zone targets/);
+  assert.equal(b.rawValue,0);assert.equal(b.points,0);assert.equal(b.zeroEvent,true);
+  assert.equal(b.noOpportunities,undefined);
+});
 
 test('ties use midpoint ranks and missing values are never observations',()=>{
   assert.equal(S.percentile([0,0,0,0,1],0),40);
@@ -169,7 +194,7 @@ test('signed zero metrics retain relative credit against negative values',()=>{
 });
 
 test('undefined opportunities stay unavailable, earn zero, and stay out of peer distributions',()=>{
-  const no=observed('none','WR',{money_down_targets:0,money_down_failures:0,red_zone_targets:0,qb_money_down_targets:0,qb_red_zone_targets:0});
+  const no=observed('none','WR',{money_down_targets:0,money_down_failures:0,red_zone_targets:0,qb_money_down_targets:0,qb_red_zone_targets:0,team_red_zone_targets:0});
   const yes=observed('yes');apply([no,yes]);
   for(const key of ['money_down_target_share','red_zone_target_share']) {
     assert.equal(no[key],null);assert.equal(component(no,key).points,0);
