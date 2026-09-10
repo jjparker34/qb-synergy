@@ -85,7 +85,7 @@
   function empty() {
     $('#targetPicker').hidden = true;
     const available = manifest.seasons.filter(s => s !== season);
-    $('#content').innerHTML = `<section class="empty"><h2>${scope === 'POST' ? 'No playoff connections yet' : `No ${season} connections yet`}</h2><p>${scope === 'POST' ? 'Playoff results will appear after postseason games are available.' : 'The dashboard will populate after nflverse publishes receiver-tagged pass attempts.'}</p><p>Automatic source checks run Tuesday and Thursday.</p>${available.map(s => `<a href="${url(page === 'explorer' ? 'index.html' : 'top-connections.html', null, {season:s,scope:'REG'})}">Explore the ${s} season →</a>`).join('<br>')}</section>`;
+    $('#content').innerHTML = `<section class="empty"><h2>${scope === 'POST' ? 'No playoff connections yet' : `No ${season} connections yet`}</h2><p>${scope === 'POST' ? 'Playoff results will appear after postseason games are available.' : 'The dashboard will populate after nflverse publishes receiver-tagged pass attempts.'}</p><p>Automatic source checks run daily at 13:23 UTC.</p>${available.map(s => `<a href="${url(page === 'explorer' ? 'index.html' : 'top-connections.html', null, {season:s,scope:'REG'})}">Explore the ${s} season →</a>`).join('<br>')}</section>`;
   }
   function scoreBreakdown(row, weekly = false) {
     const detail = row.scoreDetail;

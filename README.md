@@ -3,7 +3,7 @@
 The maintained website source is [`qb_synergy_dashboard/`](qb_synergy_dashboard/README.md).
 Live site: https://jjparker34.github.io/qb-synergy/
 
-2026 data refreshes automatically Tuesday and Thursday at 13:23 UTC through GitHub Actions.
+2026 data refreshes automatically every day at 13:23 UTC through GitHub Actions, incorporating the previous day's games as nflverse publishes them.
 The corrected 2025 archive is available in the season selector. Use the dashboard README for
 manual refresh, tests, deployment, and rollback instructions.
 
