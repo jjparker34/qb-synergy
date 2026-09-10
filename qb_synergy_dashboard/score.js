@@ -1,4 +1,4 @@
-/* Shared by every view and Node verification. Missing inputs never become zero. */
+/* Shared by every view and Node verification. No receptions earn no YAC credit; missing raw inputs stay unavailable. */
 (function (root) {
   'use strict';
   const components = [
@@ -42,11 +42,12 @@
     for (const g of ['WR_TE', 'RB']) {
       const peers = rows.filter(row => group(row) === g && row.targets > 0);
       for (const [source, target] of raw) {
-        const available = peers.map(r => number(r[source])).filter(v => v !== null);
+        const noReceptions = row => source === 'yac_over_expected_per_reception' && number(row.receptions) === 0;
+        const available = peers.filter(r => !noReceptions(r)).map(r => number(r[source])).filter(v => v !== null);
         const baseline = available.length ? available.reduce((a, b) => a + b, 0) / available.length : null;
         for (const row of peers) {
           const blend = row.targets / (row.targets + k);
-          row[target] = number(row[source]) === null || baseline === null ? null : blend * row[source] + (1 - blend) * baseline;
+          row[target] = noReceptions(row) || number(row[source]) === null || baseline === null ? null : blend * row[source] + (1 - blend) * baseline;
         }
       }
       const eligible = peers.filter(row => row.targets >= min);
@@ -54,6 +55,10 @@
         .map(key => [key, eligible.map(row => number(row[key])).filter(v => v !== null)]));
       for (const row of peers) {
         const detail = components.map(([section, label, key, weight]) => {
+          if (key === 'scoreYacoe' && number(row.receptions) === 0) {
+            return {group: section, label, weight, points: 0,
+              note: 'No receptions: YAC contributes 0 of its 7 points.'};
+          }
           const pct = percentile(samples[key], row[key]);
           return {group: section, label, weight, points: pct === null ? null : weight * Math.round(pct) / 100};
         });

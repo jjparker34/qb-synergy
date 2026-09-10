@@ -23,6 +23,41 @@ test('missing inputs suppress scores and do not become zero',()=>{
   assert.equal(apply([row('r',1,{yac_over_expected_per_reception:null})]).pairs[0].synergyScore,null);
   assert.equal(typeof S.apply({pairs:[row('r',1)]}).pairs[0].synergyScore,'number');
 });
+test('zero receptions earn zero YAC points and still produce season and weekly scores',()=>{
+  for(const weekly of [false,true]) {
+    const pairs=[row('miss',1,{receptions:0,first_downs:0,explosives:0,epa_per_target:-.8,
+      success_rate:0,cpoe:-75,yac_over_expected_per_reception:null,qb_epa_lift:-.4}),
+      row('catch',5,{receptions:4,yac_over_expected_per_reception:2})];
+    S.apply({pairs,thresholds},{weekly});
+    const miss=pairs[0],yac=miss.scoreDetail.components.find(c=>c.label==='YAC over expected / rec');
+    assert.equal(typeof miss.synergyScore,'number');
+    assert.equal(yac.points,0);assert.equal(yac.weight,7);
+    assert.match(yac.note,/No receptions/);
+    assert.equal(miss.yac_over_expected_per_reception,null);
+    assert.equal(miss.scoreYacoe,null);
+    assert.equal(pairs[1].scoreYacoe,2);
+    assert.equal(miss.synergyScore,Math.max(0,Math.round(miss.scoreDetail.components.reduce((n,c)=>n+c.points,0)-miss.scoreDetail.penalty)));
+    assert.equal(S.ranked(pairs,{minimum:1}).length,2);
+  }
+});
+test('an all-incomplete peer pool scores without invented YAC observations',()=>{
+  const pairs=[row('a',1,{receptions:0,yac_over_expected_per_reception:null}),
+    row('b',2,{receptions:0,yac_over_expected_per_reception:0})];
+  apply(pairs);
+  for(const r of pairs){
+    assert.equal(typeof r.synergyScore,'number');
+    assert.equal(r.scoreYacoe,null);
+    assert.equal(r.scoreDetail.components.find(c=>c.label==='YAC over expected / rec').points,0);
+  }
+});
+test('a catch with missing YAC data is distinct from no catches',()=>{
+  const caught=row('caught',1,{receptions:1,yac_over_expected_per_reception:null});
+  const unknown=row('unknown',1,{receptions:null,yac_over_expected_per_reception:null});
+  const otherMissing=row('other',1,{receptions:0,cpoe:null,yac_over_expected_per_reception:null});
+  apply([caught,unknown,otherMissing]);
+  for(const r of [caught,unknown,otherMissing])assert.equal(r.synergyScore,null);
+  for(const r of [caught,unknown])assert.equal(r.scoreDetail.components.find(c=>c.label==='YAC over expected / rec').points,null);
+});
 test('RB peers cannot change WR/TE score',()=>{
   const wr=apply([row('a'),row('b',40,{epa_per_target:.7})]).pairs[0].synergyScore;
   const withRb=apply([row('a'),row('b',40,{epa_per_target:.7}),row('c',50,{position:'RB',epa_per_target:9})]);

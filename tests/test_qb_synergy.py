@@ -64,6 +64,17 @@ class BuilderTests(unittest.TestCase):
         pbp['xyac_mean_yardage']=float('nan')
         self.assertTrue(all(r['yac_over_expected_per_reception'] is None for r in builder.aggregate(builder.prepare(pbp,players),players)))
 
+    def test_no_receptions_keep_raw_yac_unavailable(self):
+        players,pbp,_=fixtures()
+        pbp['complete_pass']=0
+        pbp['yards_after_catch']=float('nan')
+        pbp['receiving_yards']=0
+        for row in builder.aggregate(builder.prepare(pbp,players),players):
+            self.assertGreater(row['targets'],0)
+            self.assertEqual(row['receptions'],0)
+            self.assertEqual(row['modeled_receptions'],0)
+            self.assertIsNone(row['yac_over_expected_per_reception'])
+
     def test_pending_season_is_distinct_from_a_failed_download(self):
         players,_,schedule=fixtures()
         schedule['home_score']=float('nan');schedule['away_score']=float('nan');schedule['gameday']='2099-09-01'

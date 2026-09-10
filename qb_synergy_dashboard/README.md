@@ -19,13 +19,17 @@ not inferred from the calendar year. Keep it at 2026 through the playoffs in 202
 `data/manifest.json` lists seasons. Each season has REG/POST/ALL datasets, recent-window aggregates,
 weekly rows, and corrected cumulative snapshots. Root `data*.json` files retain the corrected legacy 2025
 export but are not shipped in the new artifact. 2025 counts and core production totals are preserved;
-additional one-target duos are available in raw views. Method 2026.1 retains the weights while correcting
+additional one-target duos are available in raw views. Method 2026.2 retains the weights while correcting
 missing-input handling and weekly comparison pools.
 
 Scores require at least one target in every season, scope, and time window, including the 2025 archive.
 Season-to-date and last-four-week scores are provisional below 30 targets (5 in playoffs). Rankings
 default to provisional scores until qualified connections exist; All connections also includes rows
 with unavailable scores. Weekly scores use their own peer pool and stabilization.
+
+Method 2026.2 gives connections with zero receptions 0 of the 7 YAC component points, so no catches
+alone do not prevent a score. Raw YAC per reception remains unavailable and those connections are
+excluded from YAC comparison samples. Other missing model inputs still suppress the composite.
 
 ## Verification
 

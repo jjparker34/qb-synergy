@@ -224,7 +224,7 @@ def build(season, output_dir, refresh=False, cache_dir=None):
         previous = read_json(previous_path) if previous_path.exists() else None
         unchanged = previous and previous.get('sourceFingerprint') == fingerprint and previous.get('builderFingerprint') == builder_fingerprint
         generated_at = previous['generatedAt'] if unchanged else now
-        meta = dict(season=season, seasonScope=scope, scope=label, methodVersion='2026.1',
+        meta = dict(season=season, seasonScope=scope, scope=label, methodVersion='2026.2',
                     generatedAt=generated_at, sourceCheckedAt=checked_at, sourceFingerprint=fingerprint,
                     builderFingerprint=builder_fingerprint,
                     latestIncludedWeek=included, latestCompletedWeek=completed[-1] if completed else None,
