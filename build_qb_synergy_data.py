@@ -219,7 +219,7 @@ def build(season, output_dir, refresh=False, cache_dir=None):
         game_ids, completed, included = coverage(pbp, schedule, scope)
         first = int(scoped.week.min()) if len(scoped) else None
         thresholds = {'score': 5 if scope == 'POST' else 15, 'qualified': 5 if scope == 'POST' else 30,
-                      'weekly': 2 if scope == 'POST' else 4}
+                      'weekly': 1}
         previous_path = destination / f'{scope}.json'
         previous = read_json(previous_path) if previous_path.exists() else None
         unchanged = previous and previous.get('sourceFingerprint') == fingerprint and previous.get('builderFingerprint') == builder_fingerprint

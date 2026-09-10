@@ -22,6 +22,9 @@ export but are not shipped in the new artifact. 2025 counts and core production 
 additional one-target duos are available in raw views. Method 2026.1 retains the weights while correcting
 missing-input handling and weekly comparison pools.
 
+Weekly scores require at least one target in every scope, including the 2025 archive. Season-to-date
+and last-four-week scoring and ranking thresholds still follow the scope's separate minimums.
+
 ## Verification
 
 ```powershell

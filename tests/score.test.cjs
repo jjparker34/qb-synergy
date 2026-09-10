@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../qb_synergy_dashboard/score.js');
-const thresholds = {score:15,qualified:30,weekly:4};
+const thresholds = {score:15,qualified:30,weekly:1};
 function row(id, targets=30, overrides={}) {
   return {qbId:'q',receiverId:id,team:'T',position:'WR',targets,first_downs:10,explosives:3,
     epa_per_target:.3,success_rate:.5,cpoe:2,yac_over_expected_per_reception:1,qb_epa_lift:.2,
@@ -28,11 +28,24 @@ test('RB peers cannot change WR/TE score',()=>{
   assert.equal(withRb.pairs[0].synergyScore,wr);
 });
 test('weekly pools are independent; weekly minimum differs from season',()=>{
-  const week1={pairs:[row('a',4),row('b',3)],thresholds};
+  const week1={pairs:[row('a',1),row('b',2)],thresholds};
   S.apply(week1,{weekly:true});const score=week1.pairs[0].synergyScore;
   S.apply({pairs:[row('x',20,{epa_per_target:20})],thresholds},{weekly:true});
   assert.equal(week1.pairs[0].synergyScore,score);assert.notEqual(score,null);
-  assert.equal(week1.pairs[1].synergyScore,null);
+  assert.notEqual(week1.pairs[1].synergyScore,null);
+  assert.equal(week1.pairs[0].scoreDetail.minimum,1);
+  assert.equal(week1.pairs[0].scoreDetail.peers,2);
+  assert.equal(apply([row('a',1)]).pairs[0].synergyScore,null);
+});
+test('one-target weekly scores require real targets and complete inputs in every scope',()=>{
+  for(const scopeThresholds of [thresholds,{score:5,qualified:5,weekly:1},undefined]) {
+    const pairs=[row('zero',0),row('one',1),row('missing',1,{yac_over_expected_per_reception:null})];
+    S.apply({pairs,thresholds:scopeThresholds},{weekly:true});
+    assert.equal(pairs[0].synergyScore??null,null);
+    assert.equal(typeof pairs[1].synergyScore,'number');
+    assert.equal(pairs[1].scoreDetail.minimum,1);
+    assert.equal(pairs[2].synergyScore,null);
+  }
 });
 test('recent view uses its own raw rows, without changing season rows',()=>{
   const season=apply([row('a',60)]);const recent=apply([row('a',10)]);

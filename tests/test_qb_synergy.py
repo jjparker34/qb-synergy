@@ -115,6 +115,12 @@ class BuilderTests(unittest.TestCase):
             self.assertEqual(payload['snapshotWeeks'],[1,2,4])
             self.assertEqual(payload['recentStartWeek'],1)
             self.assertEqual(builder.read_json(out/'data/2026/POST.json')['pairs'],[])
+            for scope in builder.SCOPES:
+                scoped=builder.read_json(out/f'data/2026/{scope}.json')
+                self.assertEqual(scoped['thresholds'],dict(score=5 if scope=='POST' else 15,
+                    qualified=5 if scope=='POST' else 30,weekly=1))
+                for week in scoped['snapshotWeeks']:
+                    self.assertEqual(builder.read_json(out/f'data/2026/snapshots/{scope}-{week}.json')['thresholds'],scoped['thresholds'])
             snapshot=out/'data/2026/snapshots/REG-1.json';original=snapshot.read_bytes()
             pbp.loc[0,'receiving_yards']=20;pbp.to_csv(cache/'play_by_play_2026.csv.gz',index=False,compression='gzip')
             builder.build(2026,out,cache_dir=cache)

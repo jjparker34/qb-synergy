@@ -28,7 +28,7 @@
   };
   function apply(data, options = {}) {
     const weekly = options.weekly || false;
-    const min = weekly ? data.thresholds?.weekly ?? 4 : data.thresholds?.score ?? 15;
+    const min = weekly ? data.thresholds?.weekly ?? 1 : data.thresholds?.score ?? 15;
     const k = weekly ? 8 : 40;
     const rows = data.pairs;
     for (const row of rows) {
