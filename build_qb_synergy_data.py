@@ -218,7 +218,7 @@ def build(season, output_dir, refresh=False, cache_dir=None):
         scoped = plays if scope == 'ALL' else plays.loc[plays.season_type.eq(scope)]
         game_ids, completed, included = coverage(pbp, schedule, scope)
         first = int(scoped.week.min()) if len(scoped) else None
-        thresholds = {'score': 5 if scope == 'POST' else 15, 'qualified': 5 if scope == 'POST' else 30,
+        thresholds = {'score': 1, 'qualified': 5 if scope == 'POST' else 30,
                       'weekly': 1}
         previous_path = destination / f'{scope}.json'
         previous = read_json(previous_path) if previous_path.exists() else None

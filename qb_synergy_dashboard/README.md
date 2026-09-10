@@ -22,8 +22,10 @@ export but are not shipped in the new artifact. 2025 counts and core production 
 additional one-target duos are available in raw views. Method 2026.1 retains the weights while correcting
 missing-input handling and weekly comparison pools.
 
-Weekly scores require at least one target in every scope, including the 2025 archive. Season-to-date
-and last-four-week scoring and ranking thresholds still follow the scope's separate minimums.
+Scores require at least one target in every season, scope, and time window, including the 2025 archive.
+Season-to-date and last-four-week scores are provisional below 30 targets (5 in playoffs). Rankings
+default to provisional scores until qualified connections exist; All connections also includes rows
+with unavailable scores. Weekly scores use their own peer pool and stabilization.
 
 ## Verification
 

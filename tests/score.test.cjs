@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../qb_synergy_dashboard/score.js');
-const thresholds = {score:15,qualified:30,weekly:1};
+const thresholds = {score:1,qualified:30,weekly:1};
 function row(id, targets=30, overrides={}) {
   return {qbId:'q',receiverId:id,team:'T',position:'WR',targets,first_downs:10,explosives:3,
     epa_per_target:.3,success_rate:.5,cpoe:2,yac_over_expected_per_reception:1,qb_epa_lift:.2,
@@ -10,24 +10,25 @@ function row(id, targets=30, overrides={}) {
 }
 const apply=rows=>S.apply({pairs:rows,thresholds});
 test('qualification boundaries and identical shared calculation',()=>{
-  const data=apply([row('14',14),row('15',15),row('29',29),row('30',30)]);
-  assert.equal(data.pairs[0].synergyScore,null);
-  assert.equal(typeof data.pairs[1].synergyScore,'number');
+  const data=apply([row('1',1),row('14',14),row('15',15),row('29',29),row('30',30)]);
+  for(const r of data.pairs)assert.equal(typeof r.synergyScore,'number');
   assert.equal(S.ranked(data.pairs).length,1);
+  assert.equal(S.ranked(data.pairs,{minimum:1}).length,5);
   for(const r of data.pairs)assert.equal(S.calculate(data,r),r.synergyScore);
 });
 test('missing inputs suppress scores and do not become zero',()=>{
   assert.equal(apply([row('r',30,{cpoe:null})]).pairs[0].synergyScore,null);
   assert.equal(S.number(null),null);
   assert.equal(S.number(0),0);
-  assert.equal(apply([row('r',2)]).pairs[0].synergyScore,null);
+  assert.equal(apply([row('r',1,{yac_over_expected_per_reception:null})]).pairs[0].synergyScore,null);
+  assert.equal(typeof S.apply({pairs:[row('r',1)]}).pairs[0].synergyScore,'number');
 });
 test('RB peers cannot change WR/TE score',()=>{
   const wr=apply([row('a'),row('b',40,{epa_per_target:.7})]).pairs[0].synergyScore;
   const withRb=apply([row('a'),row('b',40,{epa_per_target:.7}),row('c',50,{position:'RB',epa_per_target:9})]);
   assert.equal(withRb.pairs[0].synergyScore,wr);
 });
-test('weekly pools are independent; weekly minimum differs from season',()=>{
+test('weekly pools and stabilization are independent from season scores',()=>{
   const week1={pairs:[row('a',1),row('b',2)],thresholds};
   S.apply(week1,{weekly:true});const score=week1.pairs[0].synergyScore;
   S.apply({pairs:[row('x',20,{epa_per_target:20})],thresholds},{weekly:true});
@@ -35,10 +36,10 @@ test('weekly pools are independent; weekly minimum differs from season',()=>{
   assert.notEqual(week1.pairs[1].synergyScore,null);
   assert.equal(week1.pairs[0].scoreDetail.minimum,1);
   assert.equal(week1.pairs[0].scoreDetail.peers,2);
-  assert.equal(apply([row('a',1)]).pairs[0].synergyScore,null);
+  assert.equal(typeof apply([row('a',1)]).pairs[0].synergyScore,'number');
 });
 test('one-target weekly scores require real targets and complete inputs in every scope',()=>{
-  for(const scopeThresholds of [thresholds,{score:5,qualified:5,weekly:1},undefined]) {
+  for(const scopeThresholds of [thresholds,{score:1,qualified:5,weekly:1},undefined]) {
     const pairs=[row('zero',0),row('one',1),row('missing',1,{yac_over_expected_per_reception:null})];
     S.apply({pairs,thresholds:scopeThresholds},{weekly:true});
     assert.equal(pairs[0].synergyScore??null,null);
@@ -49,7 +50,14 @@ test('one-target weekly scores require real targets and complete inputs in every
 });
 test('recent view uses its own raw rows, without changing season rows',()=>{
   const season=apply([row('a',60)]);const recent=apply([row('a',10)]);
-  assert.notEqual(season.pairs[0].synergyScore,null);assert.equal(recent.pairs[0].synergyScore,null);
+  assert.notEqual(season.pairs[0].synergyScore,null);assert.notEqual(recent.pairs[0].synergyScore,null);
+  assert.equal(S.ranked(season.pairs).length,1);assert.equal(S.ranked(recent.pairs).length,0);
+  assert.equal(recent.pairs[0].targets,10);assert.equal(season.pairs[0].targets,60);
+});
+test('playoff scores start at one target and qualify at five',()=>{
+  const data=S.apply({pairs:[row('a',1),row('b',4),row('c',5)],thresholds:{score:1,qualified:5,weekly:1}});
+  assert.equal(S.ranked(data.pairs,{minimum:1}).length,3);
+  assert.deepEqual(S.ranked(data.pairs,{minimum:5}).map(r=>r.receiverId),['c']);
 });
 test('rank changes use matching filters, stable identity and new qualification',()=>{
   const previous=[{...row('a'),synergyScore:80},{...row('b',14),synergyScore:null}];

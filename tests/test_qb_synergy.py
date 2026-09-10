@@ -117,7 +117,7 @@ class BuilderTests(unittest.TestCase):
             self.assertEqual(builder.read_json(out/'data/2026/POST.json')['pairs'],[])
             for scope in builder.SCOPES:
                 scoped=builder.read_json(out/f'data/2026/{scope}.json')
-                self.assertEqual(scoped['thresholds'],dict(score=5 if scope=='POST' else 15,
+                self.assertEqual(scoped['thresholds'],dict(score=1,
                     qualified=5 if scope=='POST' else 30,weekly=1))
                 for week in scoped['snapshotWeeks']:
                     self.assertEqual(builder.read_json(out/f'data/2026/snapshots/{scope}-{week}.json')['thresholds'],scoped['thresholds'])
