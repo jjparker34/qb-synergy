@@ -27,7 +27,7 @@
     const words = remaining.split(' ').filter(Boolean);
     return rows.filter(row => {
       if (teamCodes && !teamCodes.has(row.team)) return false;
-      const text = normalize(`${row.qbFullName || row.qb} ${row.receiverFullName || row.receiver} ${row.qb} ${row.receiver} ${teams[row.team]?.[0] || row.team} ${row.team} ${row.position}`);
+      const text = normalize(`${row.qbFullName || row.qb} ${row.receiverFullName || row.receiver} ${row.qb} ${row.receiver} ${teams[row.team]?.[0] || row.team} ${row.team} ${row.position} ${row.listedPosition || ''} ${row.listedPosition==='FB'?'fullback':''}`);
       return words.every(word => text.includes(word));
     }).sort((a,b) => b.targets-a.targets || String(a.receiverId).localeCompare(String(b.receiverId))).slice(0,limit);
   }

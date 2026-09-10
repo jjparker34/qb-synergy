@@ -18,31 +18,43 @@ not inferred from the calendar year. Keep it at 2026 through the playoffs in 202
 
 `data/manifest.json` lists seasons. Each season has REG/POST/ALL datasets, recent-window aggregates,
 weekly rows, and corrected cumulative snapshots. Root `data*.json` files retain the corrected legacy 2025
-export but are not shipped in the new artifact. 2025 counts and core production totals are preserved;
-additional one-target duos are available in raw views. Method 2026.2 retains the weights while correcting
-missing-input handling and weekly comparison pools.
+export but are not shipped in the new artifact. The maintained 2025 archive is rebuilt with corrected
+ordinary-target counts, fullbacks in the RB group, and quarterback/team denominators. Method 2026.3
+retains the weights and one-target eligibility while correcting zero-event credit, ties, observation
+counts, missing-input handling, and rounding across every season and view.
 
 Scores require at least one target in every season, scope, and time window, including the 2025 archive.
 Season-to-date and last-four-week scores are provisional below 30 targets (5 in playoffs). Rankings
 default to provisional scores until qualified connections exist; All connections also includes rows
 with unavailable scores. Weekly scores use their own peer pool and stabilization.
 
-Method 2026.2 awards YAC points only when modeled receptions are available. Zero receptions or missing
+Method 2026.3 awards YAC points only when modeled receptions are available. Zero receptions or missing
 YAC model coverage receive 0 of the 7 YAC points; the rest of the score is calculated normally. Missing
 YAC model coverage is labeled beside the score and in its explanation. Raw YAC per reception remains
 unavailable and is excluded from YAC comparison samples. Other missing model inputs still suppress the composite.
+
+Zero usage, successful targets, first downs, or explosive plays earn zero for their component. Other
+percentiles use midpoint ties. Missing opportunity shares remain null and earn no credit. Zero-event
+penalties are zero; positive penalty ties use midpoint ranks. Component and penalty hundredths are
+summed as integers before final half-up rounding. Modeled receptions determine YAC stabilization;
+CPOE/success use covered targets, and QB lift uses the smaller of duo and other-receiver target counts.
+The UI exposes sample and coverage flags and uses component points for its profile bars.
 
 ## Verification
 
 ```powershell
 python -m unittest discover -s tests -p test_qb_synergy.py
 node --test tests/score.test.cjs tests/search.test.cjs
+node scripts/audit_qb_synergy.cjs --output qb_synergy_dashboard/output/audit/score-validation-2026-3.json
 python scripts/package_qb_synergy.py --check
 python -m http.server 8765 --directory qb_synergy_dashboard
 ```
 
 Check 2026 pending data, 2025 REG/POST/ALL, both time windows, provisional/raw filters, and existing duo links.
 The browser uses one shared scorer. Historic score and rank changes are recalculated from corrected data.
+Packaging runs the complete score audit after any fresh download and before committing or deploying data.
+It checks every category in WR, TE, RB, and FB, exact component/penalty arithmetic, and weekly aggregation
+against season, recent, and cumulative snapshots. The workflow summary reports validation counts.
 
 ## Deployment
 

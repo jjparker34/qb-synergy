@@ -1,4 +1,6 @@
 import importlib.util
+import copy
+import io
 import json
 import tempfile
 import unittest
@@ -21,6 +23,7 @@ def fixtures():
         for index in range(20):
             row = dict.fromkeys(builder.COLS, 0)
             row.update(season=2026, season_type='REG', game_id=f'g{week}', week=week, posteam='JAX',
+                       play_id=index+1, play_type='pass', two_point_attempt=0,
                        passer_player_id='q', passer_player_name='Q.Name',
                        receiver_player_id='r' if index<15 else '00-0040718',
                        receiver_player_name='R.Name' if index<15 else 'T.Hunter',
@@ -63,6 +66,69 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(receiver['yac_over_expected_per_reception'],1)
         pbp['xyac_mean_yardage']=float('nan')
         self.assertTrue(all(r['yac_over_expected_per_reception'] is None for r in builder.aggregate(builder.prepare(pbp,players),players)))
+
+    def test_conversions_and_nullified_plays_do_not_enter_any_receiving_totals(self):
+        players,pbp,_=fixtures()
+        extra=pbp.iloc[:2].copy()
+        extra['play_id']=[901,902]
+        extra.loc[extra.index[0],'two_point_attempt']=1
+        extra.loc[extra.index[1],'play_type']='no_play'
+        extra['epa']=100
+        extra['success']=1
+        expected=builder.aggregate(builder.prepare(pbp,players),players)
+        actual=builder.aggregate(builder.prepare(pd.concat([pbp,extra]),players),players)
+        self.assertEqual(actual,expected)
+
+    def test_fullbacks_share_rb_group_without_losing_the_listed_position(self):
+        players,pbp,_=fixtures()
+        players.loc[players.gsis_id.eq('r'),'position']='FB'
+        receiver=next(r for r in builder.aggregate(builder.prepare(pbp,players),players) if r['receiverId']=='r')
+        self.assertEqual((receiver['position'],receiver['listedPosition'],receiver['targets']),('RB','FB',45))
+
+    def test_quarterback_denominators_and_lift_stay_with_the_team(self):
+        players,pbp,_=fixtures()
+        pbp.loc[pbp.week.eq(1),'posteam']='CLE'
+        pbp.loc[pbp.week.eq(1),'epa']=2
+        pairs=builder.aggregate(builder.prepare(pbp,players),players)
+        builder.validate_rows(pairs)
+        for row in pairs:
+            local=[r for r in pairs if r['qbId']==row['qbId'] and r['team']==row['team']]
+            self.assertEqual(row['qb_targets'],sum(r['targets'] for r in local))
+            self.assertEqual(row['qb_money_down_targets'],sum(r['money_down_targets'] for r in local))
+            self.assertEqual(row['qb_red_zone_targets'],sum(r['red_zone_targets'] for r in local))
+            self.assertEqual(row['qb_epa_lift'],0)
+        self.assertEqual({r['qb_targets'] for r in pairs},{20,40})
+
+    def test_partial_model_coverage_and_missing_observed_yac_are_explicit(self):
+        players,pbp,_=fixtures()
+        pbp.loc[0,['cpoe','success','yards_after_catch']]=float('nan')
+        r=next(r for r in builder.aggregate(builder.prepare(pbp,players),players) if r['receiverId']=='r')
+        self.assertEqual((r['cpoe_targets'],r['success_targets'],r['modeled_receptions']),(44,44,44))
+        self.assertEqual(r['success_rate'],1)
+        self.assertIsNone(r['yac_per_reception'])
+        self.assertIsNone(r['yac'])
+
+    def test_bad_source_rows_stop_aggregation(self):
+        players,pbp,_=fixtures()
+        bad_sources=[pd.concat([pbp,pbp.iloc[:1]])]
+        for column,value in [('complete_pass',float('nan')),('down',float('nan')),
+                             ('receiving_yards',float('nan')),('two_point_attempt',float('nan')),
+                             ('receiver_player_id','unlisted'),('success',0)]:
+            bad=pbp.copy();bad.loc[0,column]=value;bad_sources.append(bad)
+        for bad in bad_sources:
+            with self.subTest(row=bad.iloc[0].to_dict()),self.assertRaises(ValueError):builder.prepare(bad,players)
+
+    def test_validation_covers_recent_and_weekly_rows_and_all_component_inputs(self):
+        players,pbp,_=fixtures()
+        pairs=builder.aggregate(builder.prepare(pbp,players),players)
+        for view in ['pairs','recent','weekly']:
+            payload=dict(pairs=copy.deepcopy(pairs),recent=copy.deepcopy(pairs),weekly=[dict(week=1,pairs=copy.deepcopy(pairs))],gameIds=['g1'])
+            target=payload[view][0]['pairs'] if view=='weekly' else payload[view]
+            target[0]['money_down_target_share']=2
+            with self.subTest(view=view),self.assertRaisesRegex(ValueError,'ratio'):builder.validate(payload)
+        for field,value in [('explosives',1000),('modeled_receptions',1000),('qb_targets',1000),('qb_epa_lift',900)]:
+            bad=copy.deepcopy(pairs);bad[0][field]=value
+            with self.subTest(field=field),self.assertRaises(ValueError):builder.validate_rows(bad)
 
     def test_no_receptions_keep_raw_yac_unavailable(self):
         players,pbp,_=fixtures()
@@ -114,6 +180,8 @@ class BuilderTests(unittest.TestCase):
                 with self.assertRaises(OSError):builder.fetch('https://example.test',path,True)
                 network.assert_called_once()
                 self.assertEqual(path.read_text(),'cached')
+            with patch.object(builder,'urlopen',return_value=io.BytesIO(b'fresh')):
+                self.assertEqual(builder.fetch('https://example.test',path,True).read_text(),'fresh')
 
     def test_build_snapshots_corrections_and_failure_preservation(self):
         players,pbp,schedule=fixtures()

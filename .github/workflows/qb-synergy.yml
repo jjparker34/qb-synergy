@@ -16,6 +16,7 @@ on:
       - 'qb-synergy-config.json'
       - 'requirements-qb-synergy.txt'
       - 'scripts/package_qb_synergy.py'
+      - 'scripts/audit_qb_synergy.cjs'
       - 'tests/**'
       - '.github/workflows/qb-synergy.yml'
 concurrency:

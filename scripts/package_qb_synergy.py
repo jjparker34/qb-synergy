@@ -1,6 +1,7 @@
 """Validate and stage only the maintained dashboard's public assets."""
 import importlib.util
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ for season in manifest['seasons']:
         data=builder.read_json(source/f'data/{season}/{scope}.json');builder.validate(data)
         for week in data['snapshotWeeks']:
             builder.validate(builder.read_json(source/f'data/{season}/snapshots/{scope}-{week}.json'))
+subprocess.run(['node',str(ROOT/'scripts/audit_qb_synergy.cjs')],check=True)
 if '--check' not in sys.argv:
     destination=Path(sys.argv[1]).resolve()
     destination.mkdir(parents=True,exist_ok=True)

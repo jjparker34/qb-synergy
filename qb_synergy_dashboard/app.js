@@ -18,12 +18,13 @@
   const dec = v => S.number(v) === null ? '—' : `${v > 0 ? '+' : ''}${fmt(v, 2)}`;
   const teamName = r => TEAM[r.team]?.[0] || r.team;
   const full = (r, role) => r[`${role}FullName`] || r[role];
+  const positionLabel = r => r.listedPosition || r.position;
   const pairName = r => `${full(r, 'qb')} → ${full(r, 'receiver')}`;
   const windowLabel = () => timeWindow === 'last4' && data.latestIncludedWeek ? `Weeks ${data.recentStartWeek}–${data.latestIncludedWeek}` : 'Season to date';
   const photo = (r, role, className = '') => `<img class="${className}" src="${esc(r[`${role}Photo`] || 'player-placeholder.svg')}" alt="${esc(full(r, role))}" loading="lazy">`;
   const status = r => r.targets < data.thresholds.score ? `Raw stats · ${data.thresholds.score} targets to score`
     : S.number(r.synergyScore) === null ? 'Score unavailable · missing inputs'
-    : `${r.targets < data.thresholds.qualified ? 'Provisional' : 'Qualified'}${r.scoreDetail?.components.some(c=>c.modelUnavailable)?' · YAC model unavailable':''}`;
+    : [r.targets < data.thresholds.qualified ? 'Provisional' : 'Qualified',...(r.scoreDetail?.flags||[]).map(f=>f.label)].join(' · ');
   function url(name, row, changes = {}) {
     const params = new URLSearchParams({season: String(season), scope, window: timeWindow});
     if (row) {params.set('qb', row.qbId); params.set('receiver', row.receiverId); params.set('team', row.team);}
@@ -31,7 +32,7 @@
     return `${name}?${params}`;
   }
   async function json(path) {
-    const response = await fetch(path);
+    const response = await fetch(`${path}?method=${S.methodVersion}`,{cache:'no-cache'});
     if (!response.ok) throw new Error(`Data request failed (${response.status})`);
     return response.json();
   }
@@ -52,7 +53,7 @@
     const archive = manifest.seasons.find(s=>s!==season);
     const emptyMessage = !view.pairs.length ? `<p class="search-hit">No ${season} ${esc(scopeLabels[scope].toLowerCase())} connections are available in this view.${archive?`<br><a href="${url(page==='explorer'?'index.html':'top-connections.html',null,{season:archive,scope:'REG',window:'season',search:term})}">Search the ${archive} archive →</a>`:''}</p>`
       : `<p class="search-hit">No matching players or teams in ${season} · ${esc(scopeLabels[scope])} · ${esc(windowLabel())}.</p>`;
-    $('#searchResults').innerHTML = hits.map((r,i) => `<button class="search-hit" data-hit="${i}">${esc(pairName(r))}<small>${esc(teamName(r))} (${esc(r.team)}) · ${r.position} · ${fmt(r.targets)} targets</small></button>`).join('') || emptyMessage;
+    $('#searchResults').innerHTML = hits.map((r,i) => `<button class="search-hit" data-hit="${i}">${esc(pairName(r))}<small>${esc(teamName(r))} (${esc(r.team)}) · ${esc(positionLabel(r))} · ${fmt(r.targets)} targets</small></button>`).join('') || emptyMessage;
     $('#searchResults').querySelectorAll('button').forEach(b => b.onclick = () => {
       $('#pairSearch').value = ''; $('#searchResults').innerHTML = ''; choose(hits[Number(b.dataset.hit)]);
     });
@@ -87,15 +88,41 @@
     const available = manifest.seasons.filter(s => s !== season);
     $('#content').innerHTML = `<section class="empty"><h2>${scope === 'POST' ? 'No playoff connections yet' : `No ${season} connections yet`}</h2><p>${scope === 'POST' ? 'Playoff results will appear after postseason games are available.' : 'The dashboard will populate after nflverse publishes receiver-tagged pass attempts.'}</p><p>Automatic source checks run daily at 13:23 UTC.</p>${available.map(s => `<a href="${url(page === 'explorer' ? 'index.html' : 'top-connections.html', null, {season:s,scope:'REG'})}">Explore the ${s} season →</a>`).join('<br>')}</section>`;
   }
+  const percentileLabel = value => {
+    const rounded=Math.round(value),mod=rounded%100;
+    const suffix=mod>=11&&mod<=13?'th':({1:'st',2:'nd',3:'rd'}[rounded%10]||'th');
+    return `${rounded}${suffix} percentile`;
+  };
+  const componentValue = (key,value) => ['scoreSuccess','scoreFirstDown','scoreExplosive','target_share','money_down_target_share','red_zone_target_share'].includes(key)
+    ? pct(value) : key==='scoreCpoe' ? S.number(value)===null?'—':`${dec(value)} pp` : dec(value);
+  function componentContext(row,c) {
+    const counts={target_share:['targets','qb_targets'],money_down_target_share:['money_down_targets','qb_money_down_targets'],
+      red_zone_target_share:['red_zone_targets','qb_red_zone_targets'],scoreFirstDown:['first_downs','targets'],
+      scoreSuccess:['successful_targets','success_targets'],scoreExplosive:['explosives','targets']};
+    const count=counts[c.key],observed=count?`${fmt(row[count[0]])} of ${fmt(row[count[1]])} targets`:`Observed ${componentValue(c.key,c.rawValue)}`;
+    if(c.note)return `${observed}. ${c.note}`;
+    if(c.points===null)return 'Required metric or comparison data unavailable.';
+    return `${observed}. ${c.key.startsWith('score')?`Adjusted ${componentValue(c.key,c.value)} using ${fmt(c.observations)} observations. `:''}${percentileLabel(c.percentile)} among ${fmt(c.peers)} peers.`;
+  }
+  function profile(row) {
+    return `<section><div class="section-head"><h2>Advanced profile</h2><button class="glossary-button">Stats glossary</button></div><p class="section-note">Bars show points earned for each score component; values show the observed metric. Zero-event components earn zero points. Open the score calculation for adjusted inputs and peer comparisons.</p>${row.scoreDetail.components.map(c=>{
+      const credit=c.points===null?null:100*c.points/c.weight;
+      return `<div class="metric" data-profile-component="${c.key}"><span>${esc(c.label)}</span><div class="track"><i style="width:${credit??0}%;background:${S.color(credit)}"></i></div><span class="metric-value">${c.noOpportunities?'—':componentValue(c.key,c.rawValue)}<small>${c.noOpportunities?'No QB opportunities':c.points===null?'Unavailable':`${fmt(c.points,2)} / ${c.weight} points`}</small></span></div>`;
+    }).join('')}<h3 class="raw-profile-heading">Additional metrics</h3>${[
+      ['Avg. target depth',S.number(row.air_yards)===null?'—':`${fmt(row.air_yards,1)} yd`],
+      ['YAC / reception',S.number(row.yac_per_reception)===null?'—':`${fmt(row.yac_per_reception,1)} yd`],
+      ['3rd/4th target rate',pct(row.money_down_rate)]
+    ].map(([label,value])=>`<p class="raw-metric"><span>${label}</span><b>${value}</b></p>`).join('')}</section>`;
+  }
   function scoreBreakdown(row, weekly = false) {
     const detail = row.scoreDetail;
     const sections = ['Outcome', 'Trust', 'Duo lift'];
-    const total = detail.components.every(c=>c.points!==null) ? detail.components.reduce((sum,c)=>sum+c.points,0) : null;
+    const total = detail.componentCents===null?null:detail.componentCents/100;
     return `<div class="score-detail-grid">${sections.map(section => {
       const components = detail.components.filter(c=>c.group===section);
-      const subtotal = components.every(c=>c.points!==null) ? components.reduce((sum,c)=>sum+c.points,0) : null;
-      return `<section><h3>${section} <span>${fmt(subtotal,2)} / ${components.reduce((sum,c)=>sum+c.weight,0)}</span></h3>${components.map(c=>`<p><span>${esc(c.label)}</span><b>${fmt(c.points,2)} / ${c.weight}</b></p>`).join('')}</section>`;
-    }).join('')}</div><div class="score-penalties"><p>Interception penalty <b>${fmt(detail.turnoverPenalty,2)} / 3</b></p><p>Failed 3rd/4th-down penalty <b>${fmt(detail.moneyPenalty,2)} / 2</b></p></div><p class="score-equation">${fmt(total,2)} component points − ${fmt(detail.penalty,2)} penalty points = <strong style="color:${S.color(row.synergyScore)}">${fmt(row.synergyScore)} / 100</strong> <span>(rounded)</span></p><p class="score-context">${detail.components.filter(c=>c.note).map(c=>esc(c.note)).join(" ")}${detail.components.some(c=>c.note)?" ":""}${detail.peers} eligible ${S.group(row)==='RB'?'RB':'WR/TE'} peers${weekly?' from this week':''}; ${detail.minimum}+ ${detail.minimum===1?'target':'targets'}. Efficiency is stabilized toward the ${weekly?'weekly ':''}peer baseline using targets / (targets + ${weekly?8:40}). Other missing model inputs keep the score unavailable.</p>`;
+      const subtotal = components.every(c=>c.cents!==null) ? components.reduce((sum,c)=>sum+c.cents,0)/100 : null;
+      return `<section><h3>${section} <span>${fmt(subtotal,2)} / ${components.reduce((sum,c)=>sum+c.weight,0)}</span></h3>${components.map(c=>`<p data-score-component="${c.key}"><span>${esc(c.label)}<small>${esc(componentContext(row,c))}</small></span><b>${fmt(c.points,2)} / ${c.weight}</b></p>`).join('')}</section>`;
+    }).join('')}</div><div class="score-penalties">${detail.penalties.map((p,i)=>`<p>${i?'Failed 3rd/4th-down':'Interception'} penalty <b>${fmt(p.points,2)} / ${p.weight}</b><small>${p.noOpportunities?'No 3rd/4th-down targets':p.value===0?'No events: no penalty':p.percentile===null?'Required inputs unavailable':`${pct(p.value)} · ${percentileLabel(p.percentile)} among ${fmt(p.peers)} peers`}</small></p>`).join('')}</div><p class="score-equation">${fmt(total,2)} component points − ${fmt(detail.penalty,2)} penalty points = <strong style="color:${S.color(row.synergyScore)}">${fmt(row.synergyScore)} / 100</strong> <span>(rounded)</span></p><p class="score-context">${detail.peers} eligible ${S.group(row)==='RB'?'RB/FB':'WR/TE'} peers${weekly?' from this week':''}; ${detail.minimum}+ ${detail.minimum===1?'target':'targets'}. Ties use midpoint ranks. Efficiency uses observations / (observations + ${detail.stabilization}); modeled receptions are the observations for YAC. Other missing model inputs keep the score unavailable.</p>${detail.flags.map(f=>`<p class="score-context">${esc(f.note)}</p>`).join('')}`;
   }
   function scoreDetail(row) {
     return `<details class="score-explanation"><summary>How this score is calculated</summary>${scoreBreakdown(row)}</details>`;
@@ -155,16 +182,10 @@
     const row = selected;
     if (!row) {empty(); return;}
     const stats = [['Targets',fmt(row.targets)],['Receptions',fmt(row.receptions)],['Yards',fmt(row.yards)],['Touchdowns',fmt(row.td)],['EPA / target',dec(row.epa_per_target)],['Passer rating',fmt(row.passer_rating,1)]];
-    const metrics = [['EPA / target','epa_per_target',dec],['Success rate','success_rate',pct],['Target share','target_share',pct],['3rd/4th target rate','money_down_rate',pct],['Avg. target depth','air_yards',n=>`${fmt(n,1)} yd`],['YAC / reception','yac_per_reception',n=>`${fmt(n,1)} yd`],['YAC over expected / rec','yac_over_expected_per_reception',dec],['Explosive rate','explosiveRate',pct],['First-down rate','firstDownRate',pct],['CPOE','cpoe',n=>S.number(n)===null?'—':`${dec(n)} pp`]];
-    const peerMinimum = view.pairs.some(r=>S.group(r)===S.group(row)&&r.targets>=data.thresholds.qualified) ? data.thresholds.qualified : data.thresholds.score;
-    const peers = view.pairs.filter(r=>S.group(r)===S.group(row)&&r.targets>=peerMinimum);
-    $('#content').innerHTML = `<section class="duo" aria-label="Selected connection"><div class="player">${photo(row,'qb','portrait')}<div><span class="position">Quarterback</span><h2>${esc(full(row,'qb'))}</h2><p>${esc(teamName(row))}</p></div></div><div class="score-block">${scoreRing(row)}<p class="score-label">Synergy Score</p><p class="score-status">${status(row)}<br>${fmt(row.targets)} ${row.targets===1?'target':'targets'} · ${fmt(row.games)} ${row.games===1?'game':'games'}</p></div><div class="player receiver">${photo(row,'receiver','portrait')}<div><span class="position">${row.position}</span><h2>${esc(full(row,'receiver'))}</h2><p>${esc(windowLabel())}</p></div></div></section>${scoreDetail(row)}${drawHistory(row)}<section class="stats-row" aria-label="Connection statistics">${stats.map(([label,value])=>`<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')}</section><div class="detail-grid"><section><div class="section-head"><h2>Advanced profile</h2><button class="glossary-button">Stats glossary</button></div><p class="section-note">Percentiles among ${peerMinimum}+ target ${S.group(row)==='RB'?'RB':'WR/TE'} connections in this view. YAC over expectation covers ${fmt(row.modeled_receptions)} of ${fmt(row.receptions)} receptions.</p>${metrics.map(([label,key,format])=>{
-      const sample=peers.map(r=>S.number(r[key])).filter(n=>n!==null),p=S.percentile(sample,row[key]);
-      return `<div class="metric"><span>${label}</span><div class="track"><i style="width:${p??0}%;background:${S.color(p)}"></i></div><span class="metric-value">${S.number(row[key])===null?'—':format(row[key])}<small>${p===null?'Unavailable':`${Math.round(p)}th percentile`}</small></span></div>`;
-    }).join('')}</section><section><div class="section-head"><h2>QB target tree</h2></div><div class="rank-filters"><label>Position<select id="treePosition">${['ALL','WR','TE','RB'].map(p=>`<option value="${p}" ${treeState.position===p?'selected':''}>${p==='ALL'?'All positions':p}</option>`).join('')}</select></label><label>Rows<select id="treeLimit">${['5','10','ALL'].map(p=>`<option value="${p}" ${treeState.limit===p?'selected':''}>${p==='ALL'?'All rows':p}</option>`).join('')}</select></label></div><div id="treeTable"></div></section></div>`;
-    const pairs = view.pairs.filter(r=>r.qbId===row.qbId).sort((a,b)=>b.targets-a.targets);
+    $('#content').innerHTML = `<section class="duo" aria-label="Selected connection"><div class="player">${photo(row,'qb','portrait')}<div><span class="position">Quarterback</span><h2>${esc(full(row,'qb'))}</h2><p>${esc(teamName(row))}</p></div></div><div class="score-block">${scoreRing(row)}<p class="score-label">Synergy Score</p><p class="score-status">${status(row)}<br>${fmt(row.targets)} ${row.targets===1?'target':'targets'} · ${fmt(row.games)} ${row.games===1?'game':'games'}</p></div><div class="player receiver">${photo(row,'receiver','portrait')}<div><span class="position">${esc(positionLabel(row))}</span><h2>${esc(full(row,'receiver'))}</h2><p>${esc(windowLabel())}</p></div></div></section>${scoreDetail(row)}${drawHistory(row)}<section class="stats-row" aria-label="Connection statistics">${stats.map(([label,value])=>`<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')}</section><div class="detail-grid">${profile(row)}<section><div class="section-head"><h2>QB target tree</h2></div><div class="rank-filters"><label>Position<select id="treePosition">${['ALL','WR','TE','RB'].map(p=>`<option value="${p}" ${treeState.position===p?'selected':''}>${p==='ALL'?'All positions':p==='RB'?'RB / FB':p}</option>`).join('')}</select></label><label>Rows<select id="treeLimit">${['5','10','ALL'].map(p=>`<option value="${p}" ${treeState.limit===p?'selected':''}>${p==='ALL'?'All rows':p}</option>`).join('')}</select></label></div><div id="treeTable"></div></section></div>`;
+    const pairs = view.pairs.filter(r=>r.qbId===row.qbId&&r.team===row.team).sort((a,b)=>b.targets-a.targets);
     $('#targetCount').textContent = `(${pairs.length})`;
-    $('#pairList').innerHTML = pairs.map((r,i)=>`<button class="pair ${S.id(row)===S.id(r)?'active':''}" data-pair="${i}" ${S.id(row)===S.id(r)?'aria-pressed="true"':'aria-pressed="false"'}>${photo(r,'receiver')}<span><span class="pair-name">${esc(full(r,'receiver'))}</span><small>${r.position} · ${r.team} · ${fmt(r.targets)} targets</small></span><b style="color:${S.color(r.synergyScore)}">${fmt(r.synergyScore)}</b></button>`).join('');
+    $('#pairList').innerHTML = pairs.map((r,i)=>`<button class="pair ${S.id(row)===S.id(r)?'active':''}" data-pair="${i}" ${S.id(row)===S.id(r)?'aria-pressed="true"':'aria-pressed="false"'}>${photo(r,'receiver')}<span><span class="pair-name">${esc(full(r,'receiver'))}</span><small>${esc(positionLabel(r))} · ${r.team} · ${fmt(r.targets)} targets</small></span><b style="color:${S.color(r.synergyScore)}">${fmt(r.synergyScore)}</b></button>`).join('');
     $('#pairList').querySelectorAll('button').forEach(b=>b.onclick=()=>choose(pairs[Number(b.dataset.pair)]));
     $('#treePosition').onchange=e=>{treeState.position=e.target.value;renderTree(pairs);};
     $('#treeLimit').onchange=e=>{treeState.limit=e.target.value;renderTree(pairs);};
@@ -179,11 +200,11 @@
   function renderTree(pairs) {
     let rows=pairs.filter(r=>treeState.position==='ALL'||r.position===treeState.position);
     if(treeState.limit!=='ALL') rows=rows.slice(0,Number(treeState.limit));
-    $('#treeTable').innerHTML=`<div class="table-scroll" tabindex="0" aria-label="QB targets, scroll for more stats"><table class="data-table tree"><thead><tr><th class="identity">Target</th><th>Tgt</th><th>Rec</th><th>Yds</th><th>EPA</th></tr></thead><tbody>${rows.map((r,i)=>`<tr class="${S.id(r)===S.id(selected)?'selected':''}"><td class="identity"><button class="connection-button" data-tree="${i}"><span>${esc(full(r,'receiver'))}<small>${r.position} · ${r.team}</small></span></button></td><td>${fmt(r.targets)}</td><td>${fmt(r.receptions)}</td><td>${fmt(r.yards)}</td><td>${dec(r.epa)}</td></tr>`).join('')}</tbody></table>${rows.length?'':'<p class="empty">No targets match this filter.</p>'}</div>`;
+    $('#treeTable').innerHTML=`<div class="table-scroll" tabindex="0" aria-label="QB targets, scroll for more stats"><table class="data-table tree"><thead><tr><th class="identity">Target</th><th>Tgt</th><th>Rec</th><th>Yds</th><th>EPA</th></tr></thead><tbody>${rows.map((r,i)=>`<tr class="${S.id(r)===S.id(selected)?'selected':''}"><td class="identity"><button class="connection-button" data-tree="${i}"><span>${esc(full(r,'receiver'))}<small>${esc(positionLabel(r))} · ${r.team}</small></span></button></td><td>${fmt(r.targets)}</td><td>${fmt(r.receptions)}</td><td>${fmt(r.yards)}</td><td>${dec(r.epa)}</td></tr>`).join('')}</tbody></table>${rows.length?'':'<p class="empty">No targets match this filter.</p>'}</div>`;
     $('#treeTable').querySelectorAll('[data-tree]').forEach(b=>b.onclick=()=>choose(rows[Number(b.dataset.tree)]));
   }
   function qualificationMinimum() {
-    return rankState.qualification==='raw'?1:Math.max(rankState.minimum, data.thresholds[rankState.qualification==='provisional'?'score':'qualified']);
+    return Math.max(rankState.minimum,rankState.qualification==='raw'?1:data.thresholds[rankState.qualification==='provisional'?'score':'qualified']);
   }
   function rankingRows(source) {
     return source.filter(r=>(rankState.position==='ALL'||r.position===rankState.position)&&r.targets>=qualificationMinimum()
@@ -191,7 +212,7 @@
   }
   function setupRankings() {
     $('#content').innerHTML = `<section id="feature" class="feature"></section><section aria-label="Connection rankings"><div class="section-head"><h2>Connection rankings</h2></div><details class="rank-controls" id="rankControls"><summary>Ranking filters</summary><div class="rank-control-body"><div class="rank-filters">
-      <label>Position<select id="rankPosition"><option value="ALL">All positions</option><option>WR</option><option>TE</option><option>RB</option></select></label>
+      <label>Position<select id="rankPosition"><option value="ALL">All positions</option><option>WR</option><option>TE</option><option value="RB">RB / FB</option></select></label>
       <label>Qualification<select id="rankQualification"><option value="qualified">Qualified (${data.thresholds.qualified}+)</option><option value="provisional">Include provisional (${data.thresholds.score}+)</option><option value="raw">All connections</option></select></label>
       <label>Minimum targets<select id="rankMinimum"><option value="0">View minimum</option><option>50</option><option>75</option><option>100</option></select></label>
       <label>Rows<select id="rankRows"><option>10</option><option selected>25</option><option>50</option><option value="ALL">All rows</option></select></label>
@@ -214,14 +235,14 @@
     });
     const rows=rankState.rows==='ALL'?sorted:sorted.slice(0,Number(rankState.rows));
     const leader=ranking[0];$('#feature').hidden=!leader;
-    if(leader) $('#feature').innerHTML=`<div><p>${rankState.qualification==='provisional'?'Leading connection · provisional pool':'Leading connection'}</p><h2><a href="${url('index.html',leader)}">${esc(pairName(leader))}</a></h2><p>${esc(teamName(leader))} · ${leader.position} · ${fmt(leader.targets)} targets · <span class="feature-score" style="color:${S.color(leader.synergyScore)}">${leader.synergyScore} Synergy Score</span></p></div><div class="feature-photos">${photo(leader,'qb')}${photo(leader,'receiver')}</div>`;
-    const extra=rankState.metrics==='advanced' ? [['EPA/T','epa_per_target',dec],['CPOE','cpoe',dec],['Success','success_rate',pct],['Catch','catch_rate',pct],['YACOE/rec','yac_over_expected_per_reception',dec],['3rd/4th','money_down_rate',pct]]
+    if(leader) $('#feature').innerHTML=`<div><p>${rankState.qualification==='provisional'?'Leading connection · provisional pool':'Leading connection'}</p><h2><a href="${url('index.html',leader)}">${esc(pairName(leader))}</a></h2><p>${esc(teamName(leader))} · ${esc(positionLabel(leader))} · ${fmt(leader.targets)} targets · <span class="feature-score" style="color:${S.color(leader.synergyScore)}">${leader.synergyScore} Synergy Score</span></p></div><div class="feature-photos">${photo(leader,'qb')}${photo(leader,'receiver')}</div>`;
+    const extra=rankState.metrics==='advanced' ? [['EPA/T','epa_per_target',dec],['CPOE','cpoe',dec],['Success','success_rate',pct],['Catch','catch_rate',pct],['YACOE/rec','yac_over_expected_per_reception',dec],['3rd/4th share','money_down_target_share',pct],['Red-zone share','red_zone_target_share',pct]]
       : [['Targets','targets',fmt],['Share','target_share',pct],['EPA/T','epa_per_target',dec],['Yards','yards',fmt],['TD','td',fmt]];
     let changes=new Map();
     if(snapshotPair.length===2) changes=S.rankChanges(snapshotPair[1].view.pairs,snapshotPair[0].view.pairs,{position:rankState.position,minimum:qualificationMinimum()});
     const header=(label,key,cls='')=>`<th class="${cls}" scope="col" aria-sort="${rankState.sort===key?(rankState.direction<0?'descending':'ascending'):'none'}"><button data-sort="${key}" class="${rankState.sort===key?'active':''}">${label}${rankState.sort===key?(rankState.direction<0?' ↓':' ↑'):''}</button></th>`;
     $('#rankSummary').textContent=`${rows.length} of ${filtered.length} connections · ${windowLabel()} · ${qualificationMinimum()}+ targets${rankState.qualification==='raw'?' · Unscored connections show raw stats only':''}`;
-    $('#rankingTable').innerHTML=`<div class="table-scroll" tabindex="0" aria-label="Rankings, scroll horizontally for more statistics"><table class="data-table leaderboard"><thead><tr><th class="rank" scope="col">Rank</th>${header('Connection','name','identity')}${header('Score','synergyScore','score')}<th scope="col">Δ rank*</th>${extra.map(([label,key])=>header(label,key)).join('')}</tr></thead><tbody>${rows.map((r,i)=>{const delta=changes.get(S.id(r));return `<tr><td class="rank">${ranks.get(S.id(r))??'—'}</td><td class="identity"><button class="connection-button" data-duo="${i}">${photo(r,'receiver')}<span>${esc(r.qb)} → ${esc(r.receiver)}<small>${r.team} · ${r.position} · ${status(r)}</small></span></button></td><td class="score" style="color:${S.color(r.synergyScore)}">${fmt(r.synergyScore)}</td><td>${delta===undefined?'—':delta==='New'?'New':delta===0?'0':delta>0?`↑ ${delta}`:`↓ ${-delta}`}</td>${extra.map(([,key,format])=>`<td>${format(r[key])}</td>`).join('')}</tr>`;}).join('')}</tbody></table>${rows.length?'':'<p class="empty">No connections match these filters.</p>'}</div>`;
+    $('#rankingTable').innerHTML=`<div class="table-scroll" tabindex="0" aria-label="Rankings, scroll horizontally for more statistics"><table class="data-table leaderboard"><thead><tr><th class="rank" scope="col">Rank</th>${header('Connection','name','identity')}${header('Score','synergyScore','score')}<th scope="col">Δ rank*</th>${extra.map(([label,key])=>header(label,key)).join('')}</tr></thead><tbody>${rows.map((r,i)=>{const delta=changes.get(S.id(r));return `<tr><td class="rank">${ranks.get(S.id(r))??'—'}</td><td class="identity"><button class="connection-button" data-duo="${i}">${photo(r,'receiver')}<span>${esc(r.qb)} → ${esc(r.receiver)}<small>${r.team} · ${esc(positionLabel(r))} · ${status(r)}</small></span></button></td><td class="score" style="color:${S.color(r.synergyScore)}">${fmt(r.synergyScore)}</td><td>${delta===undefined?'—':delta==='New'?'New':delta===0?'0':delta>0?`↑ ${delta}`:`↓ ${-delta}`}</td>${extra.map(([,key,format])=>`<td>${format(r[key])}</td>`).join('')}</tr>`;}).join('')}</tbody></table>${rows.length?'':'<p class="empty">No connections match these filters.</p>'}</div>`;
     $('#changesNote').textContent=snapshotPair.length===2?`* Corrected rank change: completed Week ${snapshotPair[1].throughWeek} vs Week ${snapshotPair[0].throughWeek}, using this view’s position and target minimum. Partial-week results above are excluded from this comparison.`:snapshotError?'* Weekly comparison could not load. Current rankings remain available.':'* Rank changes appear after two completed weeks. Newly eligible connections display “New.”';
     $('#rankingTable').querySelectorAll('[data-duo]').forEach(b=>b.onclick=()=>choose(rows[Number(b.dataset.duo)]));
     $('#rankingTable').querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{const key=b.dataset.sort;rankState.direction=rankState.sort===key?-rankState.direction:key==='name'?1:-1;rankState.sort=key;renderRankings();});
@@ -244,7 +265,7 @@
       dot.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose(row);}else if(e.key===' '){e.preventDefault();show();}};
     });
   }
-  const glossary=[['Synergy Score','Weighted connection score: outcomes 60%, trust 25%, duo lift 15%, minus up to 5 penalty points. WR/TE and RB are separate peer groups.'],['EPA / target','Expected points added per receiver-tagged pass attempt. Positive values add expected scoring value.'],['CPOE','Completion percentage over expectation, in percentage points.'],['Target share','Share of the quarterback’s receiver-tagged targets directed to this player.'],['Success rate','Percentage of targets with positive EPA.'],['YACOE / rec','Yards after catch above expectation per reception.'],['QB EPA lift','EPA per target to this receiver minus the QB’s EPA per target to other receivers.'],['3rd/4th','Share of this duo’s targets occurring on third or fourth down.'],['Explosive rate','Share of targets gaining at least 20 receiving yards.'],['Provisional','Enough targets to calculate a score, but below the qualification threshold.'],['Rank change','Difference between rankings through the last two completed weeks, recalculated with corrected source data.'],['Last 4 weeks','Results in the four calendar NFL weeks ending with the latest included week. Byes do not extend the window.']];
+  const glossary=[['Synergy Score','Weighted connection score: outcomes 60%, trust 25%, duo lift 15%, minus up to 5 penalty points. WR/TE and RB/FB are separate peer groups. Zero usage and zero-event outcome components earn zero points; ties use midpoint ranks.'],['EPA / target','Expected points added per receiver-tagged pass attempt. Positive values add expected scoring value.'],['CPOE','Completion percentage over expectation, in percentage points.'],['Target share','Share of the quarterback’s receiver-tagged targets directed to this player.'],['Success rate','Percentage of targets with positive EPA.'],['YACOE / rec','Yards after catch above expectation per reception.'],['QB EPA lift','EPA per target to this receiver minus the QB’s EPA per target to other receivers.'],['3rd/4th','Share of this duo’s targets occurring on third or fourth down.'],['Explosive rate','Share of targets gaining at least 20 receiving yards.'],['Provisional','Enough targets to calculate a score, but below the qualification threshold.'],['Rank change','Difference between rankings through the last two completed weeks, recalculated with corrected source data.'],['Last 4 weeks','Results in the four calendar NFL weeks ending with the latest included week. Byes do not extend the window.']];
   function bindGlossary(){document.querySelectorAll('.glossary-button').forEach(b=>b.onclick=()=>$('#glossary').showModal());}
   async function start() {
     $('#glossaryList').innerHTML=glossary.map(([term,definition])=>`<div><dt>${term}</dt><dd>${definition}</dd></div>`).join('');
@@ -258,6 +279,7 @@
     // Old duo URLs used combined scope when no scope was supplied.
     if(!query.has('season')&&query.has('qb')&&!query.has('scope'))scope='ALL';
     data=await json(`data/${season}/${scope}.json`);
+    if(data.methodVersion!==S.methodVersion)throw new Error('Scoring method and dataset version do not match. Reload after the update finishes.');
     view=scoreView(data);
     for(const week of data.weekly||[])S.apply({pairs:week.pairs,thresholds:data.thresholds},{weekly:true});
     const requested=view.pairs.find(r=>r.qbId===query.get('qb')&&r.receiverId===query.get('receiver')&&(!query.get('team')||query.get('team')===r.team));
