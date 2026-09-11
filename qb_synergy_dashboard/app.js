@@ -211,7 +211,7 @@
       &&(rankState.qualification==='raw'||S.number(r.synergyScore)!==null));
   }
   function setupRankings() {
-    $('#content').innerHTML = `<section id="feature" class="feature"></section><section aria-label="Connection rankings"><div class="section-head"><h2>Connection rankings</h2></div><details class="rank-controls" id="rankControls"><summary>Ranking filters</summary><div class="rank-control-body"><div class="rank-filters">
+    $('#content').innerHTML = `<section id="feature" class="feature" aria-label="Leading connection"></section><section aria-label="Connection rankings"><div class="section-head"><h2>Connection rankings</h2></div><details class="rank-controls" id="rankControls"><summary>Ranking filters</summary><div class="rank-control-body"><div class="rank-filters">
       <label>Position<select id="rankPosition"><option value="ALL">All positions</option><option>WR</option><option>TE</option><option value="RB">RB / FB</option></select></label>
       <label>Qualification<select id="rankQualification"><option value="qualified">Qualified (${data.thresholds.qualified}+)</option><option value="provisional">Include provisional (${data.thresholds.score}+)</option><option value="raw">All connections</option></select></label>
       <label>Minimum targets<select id="rankMinimum"><option value="0">View minimum</option><option>50</option><option>75</option><option>100</option></select></label>
@@ -224,6 +224,21 @@
     for(const id of ['trustPanel','skillPanel','rankControls']) $(`#${id}`).open=matchMedia('(min-width:761px)').matches;
     bindGlossary();renderRankings();
   }
+  function renderFeature(leader) {
+    const feature=$('#feature');
+    feature.hidden=!leader;
+    if(!leader) {
+      cancelAnimationFrame(scoreAnimation);
+      feature.replaceChildren();
+      delete feature.dataset.leader;
+      return;
+    }
+    const identity=JSON.stringify([S.id(leader),leader.synergyScore,rankState.qualification]);
+    if(feature.dataset.leader===identity)return;
+    feature.dataset.leader=identity;
+    feature.innerHTML=`<div class="feature-summary"><p>${rankState.qualification==='provisional'?'Leading connection · provisional pool':'Leading connection'}</p><h2><a href="${url('index.html',leader)}">${esc(pairName(leader))}</a></h2><p>${esc(teamName(leader))} · ${esc(positionLabel(leader))} · ${fmt(leader.targets)} ${leader.targets===1?'target':'targets'} · ${leader.targets<data.thresholds.qualified?'Provisional':'Qualified'}</p></div><div class="feature-photos">${photo(leader,'qb')}<div class="score-block">${scoreRing(leader)}<p class="score-label">Synergy Score</p></div>${photo(leader,'receiver')}</div>${scoreDetail(leader)}`;
+    animateScore(leader.synergyScore);
+  }
   function renderRankings() {
     const filtered=rankingRows(view.pairs);
     const ranking=S.ranked(view.pairs,{position:rankState.position,minimum:qualificationMinimum()});
@@ -234,8 +249,7 @@
       return (typeof av==='string'?av.localeCompare(bv):av-bv)*rankState.direction || b.targets-a.targets || S.id(a).localeCompare(S.id(b));
     });
     const rows=rankState.rows==='ALL'?sorted:sorted.slice(0,Number(rankState.rows));
-    const leader=ranking[0];$('#feature').hidden=!leader;
-    if(leader) $('#feature').innerHTML=`<div><p>${rankState.qualification==='provisional'?'Leading connection · provisional pool':'Leading connection'}</p><h2><a href="${url('index.html',leader)}">${esc(pairName(leader))}</a></h2><p>${esc(teamName(leader))} · ${esc(positionLabel(leader))} · ${fmt(leader.targets)} targets · <span class="feature-score" style="color:${S.color(leader.synergyScore)}">${leader.synergyScore} Synergy Score</span></p></div><div class="feature-photos">${photo(leader,'qb')}${photo(leader,'receiver')}</div>`;
+    renderFeature(ranking[0]);
     const extra=rankState.metrics==='advanced' ? [['EPA/T','epa_per_target',dec],['CPOE','cpoe',dec],['Success','success_rate',pct],['Catch','catch_rate',pct],['YACOE/rec','yac_over_expected_per_reception',dec],['3rd/4th share','money_down_target_share',pct],['Team red-zone share','red_zone_target_share',pct]]
       : [['Targets','targets',fmt],['Share','target_share',pct],['EPA/T','epa_per_target',dec],['Yards','yards',fmt],['TD','td',fmt]];
     let changes=new Map();
