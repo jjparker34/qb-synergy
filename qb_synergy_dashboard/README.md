@@ -65,8 +65,9 @@ against season, recent, and cumulative snapshots. The workflow summary reports v
 
 ## Deployment
 
-`.github/workflows/qb-synergy.yml` refreshes every day at 13:23 UTC (8:23 a.m. Central during daylight time,
-7:23 a.m. during standard time), incorporating the previous day's games as nflverse publishes them.
+`.github/workflows/qb-synergy.yml` schedules a refresh every day at 4:00 a.m. Central using the
+`America/Chicago` timezone, which adjusts automatically for daylight saving time. Each refresh incorporates
+the previous day's games as nflverse publishes them. GitHub may delay scheduled starts.
 It also supports a manual refresh through Actions > Refresh and deploy QB Synergy > Run workflow. Website pushes deploy existing
 validated assets without downloading new data. Pages uses GitHub Actions as its publishing source.
 Only the staged website assets are published; caches, source scripts, tests, screenshots, and other projects

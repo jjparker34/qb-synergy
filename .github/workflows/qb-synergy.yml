@@ -1,7 +1,8 @@
 name: Refresh and deploy QB Synergy
 on:
   schedule:
-    - cron: '23 13 * * *'
+    - cron: '0 4 * * *'
+      timezone: 'America/Chicago'
   workflow_dispatch:
     inputs:
       refresh:
