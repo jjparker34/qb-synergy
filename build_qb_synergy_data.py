@@ -271,6 +271,12 @@ def validate_rows(rows, team_red_zone=None):
 
 def validate(payload, previous=None):
     json.dumps(payload, allow_nan=False)
+    pending = payload.get('pendingCompletedGameIds', [])
+    if (not isinstance(pending, list) or any(not isinstance(game, str) or not game for game in pending)
+            or len(set(pending)) != len(pending) or set(pending) & set(payload['gameIds'])):
+        raise ValueError('Invalid pending completed-game coverage')
+    if 'throughWeek' in payload and pending:
+        raise ValueError('Completed snapshots cannot contain pending games')
     if payload.get('methodVersion') == METHOD_VERSION and ('teamRedZoneTargets' not in payload or 'recent' in payload and 'recentTeamRedZoneTargets' not in payload):
         raise ValueError('Missing team red-zone opportunity totals')
     validate_rows(payload['pairs'], payload.get('teamRedZoneTargets'))
@@ -310,8 +316,9 @@ def build(season, output_dir, refresh=False, cache_dir=None):
         pbp = pbp.loc[pbp.season_type.isin(['REG', 'POST'])].copy()
     completed_ids = set(schedule.loc[schedule.home_score.notna() & schedule.away_score.notna(), 'game_id'])
     pbp_ids = set(pbp.game_id.dropna())
-    if completed_ids - pbp_ids:
-        raise ValueError(f'Play-by-play missing {len(completed_ids - pbp_ids)} completed games')
+    pending_ids = completed_ids - pbp_ids
+    if pending_ids:
+        print(f'{len(pending_ids)} finished games awaiting source data; validating available games')
     if pbp_ids - set(schedule.game_id):
         raise ValueError('Play-by-play contains games absent from the season schedule')
     players = pd.read_csv(players_file, low_memory=False)
@@ -340,6 +347,7 @@ def build(season, output_dir, refresh=False, cache_dir=None):
                     builderFingerprint=builder_fingerprint,
                     latestIncludedWeek=included, latestCompletedWeek=completed[-1] if completed else None,
                     firstWeek=first, gameIds=game_ids, thresholds=thresholds,
+                    pendingCompletedGameIds=sorted(pending_ids & set(scope_schedule(schedule, scope).game_id)),
                     excludedTwoPointTargets=len(excluded_conversions))
         payload = dict(meta, pairs=aggregate(scoped, players), teamRedZoneTargets=team_red_zone_totals(scoped),
                        status='available' if len(scoped) else 'pending')
@@ -359,6 +367,7 @@ def build(season, output_dir, refresh=False, cache_dir=None):
                             recent=aggregate(recent_subset, players), teamRedZoneTargets=team_red_zone_totals(subset),
                             recentTeamRedZoneTargets=team_red_zone_totals(recent_subset))
             snapshot.update(latestIncludedWeek=week, latestCompletedWeek=week,
+                            pendingCompletedGameIds=[],
                             recentStartWeek=max(first, week - 3),
                             excludedTwoPointTargets=int(excluded_conversions.week.le(week).sum()))
             snapshot['gameIds'] = sorted(set(pbp.loc[pbp.week.le(week) & pbp.game_id.isin(game_ids), 'game_id']))
@@ -386,7 +395,9 @@ def build(season, output_dir, refresh=False, cache_dir=None):
             handle.write(f'### {season} refresh validated\n\nChecked {now}. Source `{fingerprint[:12]}`.\n\n')
             for scope in SCOPES:
                 p = generated[f'{scope}.json']
-                handle.write(f'- {scope}: {len(p["pairs"])} connections; {len(p["gameIds"])} games; completed week {p["latestCompletedWeek"]}; {p["excludedTwoPointTargets"]} conversion attempts excluded.\n')
+                handle.write(f'- {scope}: {len(p["pairs"])} connections; {len(p["gameIds"])} games; completed week {p["latestCompletedWeek"]}; {p["excludedTwoPointTargets"]} conversion attempts excluded; {len(p["pendingCompletedGameIds"])} finished games awaiting source data.\n')
+                if p['pendingCompletedGameIds']:
+                    handle.write('  Awaiting: ' + ', '.join(p['pendingCompletedGameIds']) + '.\n')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

@@ -67,7 +67,9 @@
   function renderContext() {
     document.title = `${page === 'explorer' ? 'Duo Explorer' : 'Top Connections'} · ${season} — QB Synergy`;
     const coverage = data.latestIncludedWeek ? `Through Week ${data.latestIncludedWeek}${data.latestIncludedWeek !== data.latestCompletedWeek ? ' (partial)' : ''}` : 'Awaiting season data';
-    $('#coverage').textContent = `${season} · ${scopeLabels[scope]} · ${windowLabel()} · ${coverage}`;
+    const pending = data.pendingCompletedGameIds || [];
+    const sourceCoverage = pending.length ? ` · ${data.gameIds.length} games included · ${pending.length} finished ${pending.length===1?'game':'games'} awaiting source data` : '';
+    $('#coverage').textContent = `${season} · ${scopeLabels[scope]} · ${windowLabel()} · ${coverage}${sourceCoverage}`;
     $('#freshness').innerHTML = `<a href="${url('methodology.html')}">Methodology</a><a href="https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html" target="_blank" rel="noreferrer">nflverse data</a><br>Data built ${esc(formatDate(data.generatedAt))}<br>Source checked ${esc(formatDate(data.sourceCheckedAt))} · Completed through ${data.latestCompletedWeek ? `Week ${data.latestCompletedWeek}` : 'no completed weeks'} · Method ${esc(data.methodVersion)}`;
     $('#methodLink').href = url('methodology.html');
     document.querySelectorAll('[data-nav]').forEach(a => {

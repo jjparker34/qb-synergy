@@ -74,7 +74,11 @@ in the repository are excluded. The refresh commits only `qb_synergy_dashboard/d
 same run. Do not rely on a bot commit to trigger a separate deployment.
 
 Failures leave the prior Pages deployment available. Check the workflow summary for source fingerprint,
-game counts, and completed weeks. Retry a delayed upstream release manually. Public-repository schedules
+game counts, and completed weeks. When the play-by-play feed trails the schedule, available games can
+publish with `pendingCompletedGameIds` identifying finished games still awaiting source data. The coverage
+row reports this lag, and a week is complete only after all scheduled games have finished and are included.
+Previously published games must remain present; disappearing games still stop publication.
+Retry a delayed upstream release manually. Public-repository schedules
 may be disabled by GitHub after 60 days without repository activity; verify Actions is enabled before
 resuming after the offseason. To roll back a UI change, revert its specific commit and let the push workflow
 deploy the prior implementation. Restore a known-good data commit if a data rollback is necessary.

@@ -253,8 +253,35 @@ class BuilderTests(unittest.TestCase):
             self.assertNotEqual(snapshot.read_bytes(),original)
             stable=path.read_bytes()
             pbp[pbp.week.ne(2)].to_csv(cache/'play_by_play_2026.csv.gz',index=False,compression='gzip')
-            with self.assertRaisesRegex(ValueError,'missing'):builder.build(2026,out,cache_dir=cache)
+            with self.assertRaisesRegex(ValueError,'disappeared'):builder.build(2026,out,cache_dir=cache)
             self.assertEqual(path.read_bytes(),stable)
+
+    def test_new_finished_games_can_wait_for_source(self):
+        players,pbp,schedule=fixtures()
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);cache=base/'cache';cache.mkdir();out=base/'site'
+            players.to_csv(cache/'players.csv',index=False);schedule.to_csv(cache/'games.csv',index=False)
+            for weeks in ([1],[1,2],[1,2,4]):
+                pbp[pbp.week.isin(weeks)].to_csv(cache/'play_by_play_2026.csv.gz',index=False,compression='gzip')
+                builder.build(2026,out,cache_dir=cache)
+                expected_pending=[f'g{w}' for w in [1,2,4] if w not in weeks]
+                for scope in ['REG','ALL']:
+                    payload=builder.read_json(out/f'data/2026/{scope}.json')
+                    self.assertEqual(payload['gameIds'],[f'g{w}' for w in weeks])
+                    self.assertEqual(payload['pendingCompletedGameIds'],expected_pending)
+                    self.assertEqual(payload['snapshotWeeks'],weeks)
+                    self.assertEqual(payload['latestCompletedWeek'],weeks[-1])
+                    for week in weeks:
+                        snapshot=builder.read_json(out/f'data/2026/snapshots/{scope}-{week}.json')
+                        self.assertEqual(snapshot['pendingCompletedGameIds'],[])
+                self.assertEqual(builder.read_json(out/'data/2026/POST.json')['pendingCompletedGameIds'],[])
+
+    def test_pending_coverage_cannot_overlap_included_games(self):
+        for pending in (['one'],['two','two'],'two'):
+            with self.assertRaisesRegex(ValueError,'pending'):
+                builder.validate(dict(pairs=[],gameIds=['one'],pendingCompletedGameIds=pending))
+        with self.assertRaisesRegex(ValueError,'snapshots'):
+            builder.validate(dict(pairs=[],gameIds=['one'],pendingCompletedGameIds=['two'],throughWeek=1))
 
 
 if __name__=='__main__':unittest.main()
